@@ -26,6 +26,9 @@ const initialState = {
   dealer_pos: null,
   sb_pos: null,
   bb_pos: null,
+  position_labels: {},
+  per_player_recs: {},
+  my_recommendation: null,
   street_complete: false,
   error: null,
 }

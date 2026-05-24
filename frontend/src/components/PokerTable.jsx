@@ -102,7 +102,7 @@ export default function PokerTable() {
               className="absolute -translate-x-1/2 -translate-y-1/2 z-20"
               style={{ left: `${coords.x}%`, top: `${coords.y}%` }}
             >
-              <PlayerSeat pos={pos} seat={seat} isActive={state.current_turn === pos} />
+              <PlayerSeat pos={pos} seat={seat} isActive={state.current_turn === pos} label={state.position_labels?.[pos]} />
             </div>
           )
         })}

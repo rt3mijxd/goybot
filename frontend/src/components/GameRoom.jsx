@@ -24,7 +24,7 @@ export default function GameRoom({ sessionId, userId, userName, role }) {
 
   const gs = state.state
   const isSetup = !gs || gs === 'SETUP_RESPONSIBLE' || gs === 'SETUP_TABLE' || gs === 'SEAT_PICKING' || gs === 'SETUP_BLINDS'
-  const isPlaying = gs === 'DEALING' || gs === 'PREFLOP' || gs === 'FLOP' || gs === 'TURN' || gs === 'RIVER' || gs === 'SHOWDOWN'
+  const isPlaying = gs === 'PREFLOP' || gs === 'FLOP' || gs === 'TURN' || gs === 'RIVER' || gs === 'SHOWDOWN'
   const isOperator = state.is_responsible
 
   const members = state.members || {}
@@ -67,9 +67,6 @@ export default function GameRoom({ sessionId, userId, userName, role }) {
             {/* ===== ОПЕРАТОР ===== */}
             {isOperator && (
               <>
-                {/* Ожидание карт */}
-                {gs === 'DEALING' && <DealingStatus />}
-
                 {/* Статистика + рекомендация */}
                 <div className="flex gap-2 flex-wrap">
                   <TeamStats />
@@ -77,12 +74,12 @@ export default function GameRoom({ sessionId, userId, userName, role }) {
                 </div>
 
                 {/* Единая панель действий: все игроки по порядку хода */}
-                {gs !== 'DEALING' && gs !== 'SHOWDOWN' && (
+                {gs !== 'SHOWDOWN' && (
                   <UnifiedActionPanel send={send} />
                 )}
 
                 {/* Борд — только когда все действия на улице завершены */}
-                {gs !== 'DEALING' && gs !== 'SHOWDOWN' && state.street_complete && (
+                {gs !== 'SHOWDOWN' && state.street_complete && (
                   <BoardPicker send={send} />
                 )}
 
@@ -117,10 +114,23 @@ export default function GameRoom({ sessionId, userId, userName, role }) {
             {!isOperator && (
               <>
                 <PlayerCardInput send={send} userId={userId} />
+
+                {/* Персональная рекомендация */}
+                {state.my_recommendation && (
+                  <div className="bg-gradient-to-r from-purple-900/80 to-indigo-900/80 rounded-xl p-3 mx-2 border border-purple-500/30">
+                    <div className="text-purple-300 text-xs font-bold mb-1">Рекомендация для вас</div>
+                    <div className="text-white text-sm font-semibold whitespace-pre-line">{state.my_recommendation}</div>
+                  </div>
+                )}
+
                 <div className="flex gap-2 flex-wrap">
                   <TeamStats />
-                  <RecommendationBox />
                 </div>
+
+                {/* Панель действий — игрок может нажать свое действие */}
+                {gs !== 'SHOWDOWN' && (
+                  <PlayerActionPanel send={send} userId={userId} />
+                )}
               </>
             )}
           </div>
@@ -129,33 +139,6 @@ export default function GameRoom({ sessionId, userId, userName, role }) {
           <HistoryLog />
         </div>
       )}
-    </div>
-  )
-}
-
-/* Статус раздачи для оператора */
-function DealingStatus() {
-  const { state } = useGame()
-  const playerPositions = state.player_positions || []
-
-  return (
-    <div className="bg-gray-800 rounded-xl p-3">
-      <h3 className="text-sm font-bold mb-2">Ожидание карт игроков</h3>
-      <div className="flex gap-2 flex-wrap">
-        {playerPositions.map((pos) => {
-          const seat = state.seats?.[pos]
-          const name = seat?.player?.name || pos
-          const cards = seat?.player?.cards || []
-          const hasCards = cards.length === 2 && !cards.includes('??')
-          return (
-            <div key={pos} className={`px-3 py-2 rounded-lg text-xs font-semibold ${
-              hasCards ? 'bg-green-800 text-green-200' : 'bg-gray-700 text-gray-400'
-            }`}>
-              {name} ({pos}) — {hasCards ? 'готов' : 'ждём...'}
-            </div>
-          )
-        })}
-      </div>
     </div>
   )
 }
@@ -203,7 +186,7 @@ function UnifiedActionPanel({ send }) {
         <span className="text-sm font-semibold text-gray-300">Действия игроков</span>
         {currentTurn && (
           <span className="text-xs bg-yellow-600/30 text-yellow-300 px-2 py-0.5 rounded">
-            Ход: {currentTurn}
+            Ход: {state.position_labels?.[currentTurn] || currentTurn}
           </span>
         )}
         {!currentTurn && (
@@ -236,7 +219,7 @@ function UnifiedActionPanel({ send }) {
                 ? 'text-yellow-400'
                 : isOur ? 'text-green-400' : 'text-red-400'
             }`}>
-              {name} ({pos})
+              {name} ({state.position_labels?.[pos] || pos})
             </span>
             <div className={`flex gap-1 flex-wrap ${!isCurrentTurn ? 'pointer-events-none' : ''}`}>
               <button onClick={() => act(pos, 'fold')}
@@ -297,6 +280,97 @@ function UnifiedActionPanel({ send }) {
           </div>
         )
       })}
+    </div>
+  )
+}
+
+/* Панель действий для игрока — только свой ход */
+function PlayerActionPanel({ send, userId }) {
+  const { state } = useGame()
+  const [raiseAmount, setRaiseAmount] = useState('')
+
+  const currentTurn = state.current_turn
+  const pot = state.pot || 0
+
+  // Найти позицию текущего игрока
+  const myEntry = Object.entries(state.seats || {}).find(
+    ([, s]) => s?.type === 'our' && s.player?.user_id === userId
+  )
+  if (!myEntry) return null
+
+  const [myPos, mySeat] = myEntry
+  const isMyTurn = currentTurn === myPos
+  const label = state.position_labels?.[myPos] || myPos
+  const name = mySeat.player?.name || `Д${mySeat.player?.number}`
+
+  if (!isMyTurn) {
+    if (!currentTurn) return null
+    const turnLabel = state.position_labels?.[currentTurn] || currentTurn
+    return (
+      <div className="bg-gray-800/50 rounded-xl p-3 mx-2 text-center">
+        <span className="text-xs text-gray-400">Ход: <span className="text-yellow-400 font-bold">{turnLabel}</span></span>
+      </div>
+    )
+  }
+
+  const act = (action, extra = {}) => {
+    send({ action: 'player_action', position: myPos, act: action, ...extra })
+    setRaiseAmount('')
+  }
+
+  const raisePresets = [
+    { label: '33%', mult: 0.33 },
+    { label: '50%', mult: 0.5 },
+    { label: '75%', mult: 0.75 },
+    { label: '100%', mult: 1.0 },
+    { label: '150%', mult: 1.5 },
+  ]
+
+  return (
+    <div className="bg-yellow-900/30 border border-yellow-500/50 rounded-xl p-3 mx-2">
+      <div className="text-sm font-bold text-yellow-400 mb-2 text-center">
+        Ваш ход ({label})
+      </div>
+      <div className="flex gap-1.5 flex-wrap justify-center">
+        <button onClick={() => act('fold')}
+          className="bg-red-800 hover:bg-red-700 text-white text-sm px-3 py-2 rounded-lg transition font-semibold">
+          Фолд
+        </button>
+        <button onClick={() => act('check')}
+          className="bg-gray-600 hover:bg-gray-500 text-white text-sm px-3 py-2 rounded-lg transition font-semibold">
+          Чек
+        </button>
+        <button onClick={() => act('call')}
+          className="bg-blue-700 hover:bg-blue-600 text-white text-sm px-3 py-2 rounded-lg transition font-semibold">
+          Колл
+        </button>
+        <div className="flex gap-1 items-center">
+          <input
+            type="number"
+            value={raiseAmount}
+            onChange={(e) => setRaiseAmount(e.target.value)}
+            placeholder="Сумма"
+            className="w-20 bg-gray-700 rounded px-2 py-2 text-white text-sm focus:outline-none"
+          />
+          <button onClick={() => act('raise', { amount: parseInt(raiseAmount) || 0 })}
+            className="bg-orange-700 hover:bg-orange-600 text-white text-sm px-3 py-2 rounded-lg transition font-semibold">
+            Рейз
+          </button>
+        </div>
+      </div>
+      {pot > 0 && (
+        <div className="flex gap-1 justify-center mt-2">
+          {raisePresets.map((p) => (
+            <button
+              key={p.label}
+              onClick={() => setRaiseAmount(String(Math.round(pot * p.mult)))}
+              className="bg-gray-700 hover:bg-gray-600 text-gray-300 text-xs px-2 py-1 rounded transition"
+            >
+              {p.label}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   )
 }

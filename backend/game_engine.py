@@ -1542,11 +1542,12 @@ def reset_for_new_round(game):
     game['agg_history'] = ''
     game['acted_this_street'] = set()
     game['history'] = []
-    game['state'] = GameState.DEALING
+    game['state'] = GameState.PREFLOP
     game['street_contrib'] = {}
     game['street_bet_to'] = game['bb']
     game['recommendation'] = None
     game['recommendation_pos'] = None
+    start_preflop(game)
 
 
 def build_seats_from_claimed(game):

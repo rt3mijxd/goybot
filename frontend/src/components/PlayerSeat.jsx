@@ -2,12 +2,14 @@ import React from 'react'
 import { motion } from 'framer-motion'
 import Card from './Card'
 
-export default function PlayerSeat({ pos, seat, isActive }) {
+export default function PlayerSeat({ pos, seat, isActive, label }) {
+  const displayLabel = label || pos
+
   if (!seat || seat.type === 'empty') {
     return (
       <div className="w-20 text-center">
         <div className="w-10 h-10 mx-auto rounded-full bg-gray-700/50 border border-gray-600 flex items-center justify-center text-gray-500 text-[10px]">
-          {pos}
+          {displayLabel}
         </div>
       </div>
     )
@@ -40,7 +42,7 @@ export default function PlayerSeat({ pos, seat, isActive }) {
             : 'border-red-500 bg-red-900/50'
         }`}
       >
-        <span className="text-[10px]">{pos}</span>
+        <span className="text-[10px]">{displayLabel}</span>
       </div>
 
       {/* Name */}

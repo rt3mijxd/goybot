@@ -74,6 +74,15 @@ def serialize_game(game: dict, user_id: str) -> dict:
     except Exception:
         pass
 
+    # Рекомендация для конкретного игрока (если он наш)
+    my_recommendation = None
+    for pos in g.get('player_positions', []):
+        seat = g['seats'].get(pos, {})
+        if seat.get('player', {}).get('user_id') == user_id:
+            if rec_pos == pos:
+                my_recommendation = rec_text
+            break
+
     opp_actions_out = {}
     for pos, act in g.get('opp_actions', {}).items():
         opp_actions_out[pos] = act or ''
@@ -84,21 +93,58 @@ def serialize_game(game: dict, user_id: str) -> dict:
         name = members.get(uid, uid[:6])
         claimed_out[pos] = {'user_id': uid, 'name': name}
 
-    # Определяем позиции дилера, SB, BB для фишек
+    # Определяем позиции дилера, SB, BB + ярлыки позиций по dealer_idx
     positions = g.get('positions', [])
+    n = len(positions)
     dealer_pos = None
     sb_pos = None
     bb_pos = None
-    if len(positions) >= 2:
-        dealer_idx = g.get('dealer_idx', 0) % len(positions)
+    position_labels = {}  # физ.позиция -> текущий ярлык (UTG/MP/CO/BU/SB/BB)
+
+    if n >= 2:
+        dealer_idx = g.get('dealer_idx', 0) % n
         dealer_pos = positions[dealer_idx]
-        if len(positions) == 2:
-            # Хедз-ап: дилер = SB
-            sb_pos = positions[dealer_idx]
-            bb_pos = positions[(dealer_idx + 1) % len(positions)]
+        # Стандартные ярлыки покерных позиций по размеру стола
+        label_sets = TABLE_POSITIONS  # {2: [BU,BB], 3: [BU,SB,BB], ...}
+        labels = list(label_sets.get(n, label_sets[6]))
+        # Ротируем: dealer (BU) = positions[dealer_idx]
+        # BU всегда последний в labels перед SB/BB
+        # labels идут в порядке: UTG, MP, CO, BU, SB, BB
+        # BU index в labels:
+        bu_idx_in_labels = labels.index('BU') if 'BU' in labels else 0
+        for i, phys_pos in enumerate(positions):
+            # Смещаем так, чтобы dealer_idx стал BU
+            label_i = (i - dealer_idx + bu_idx_in_labels) % n
+            position_labels[phys_pos] = labels[label_i]
+
+        if n == 2:
+            sb_pos = dealer_pos
+            bb_pos = positions[(dealer_idx + 1) % n]
         else:
-            sb_pos = positions[(dealer_idx + 1) % len(positions)]
-            bb_pos = positions[(dealer_idx + 2) % len(positions)]
+            sb_pos = positions[(dealer_idx + 1) % n]
+            bb_pos = positions[(dealer_idx + 2) % n]
+
+    # Краткая рекомендация для каждого нашего игрока
+    per_player_recs = {}
+    for pos in g.get('player_positions', []):
+        seat = g['seats'].get(pos, {})
+        if seat.get('folded'):
+            per_player_recs[pos] = 'ФОЛД'
+            continue
+        cards = seat.get('player', {}).get('cards', [])
+        eq = seat.get('player', {}).get('equity_share', 0)
+        if not cards or len(cards) < 2:
+            per_player_recs[pos] = '—'
+            continue
+        # Простая краткая рекомендация на основе equity
+        if eq >= 60:
+            per_player_recs[pos] = 'РЕЙЗ'
+        elif eq >= 40:
+            per_player_recs[pos] = 'КОЛЛ'
+        elif eq >= 25:
+            per_player_recs[pos] = 'ЧЕК/КОЛЛ'
+        else:
+            per_player_recs[pos] = 'ФОЛД'
 
     return {
         'state': g['state'].name,
@@ -124,6 +170,9 @@ def serialize_game(game: dict, user_id: str) -> dict:
         'dealer_pos': dealer_pos,
         'sb_pos': sb_pos,
         'bb_pos': bb_pos,
+        'position_labels': position_labels,
+        'per_player_recs': per_player_recs,
+        'my_recommendation': my_recommendation,
         'street_complete': g.get('current_turn') is None and g['state'] not in (
             GameState.SETUP_RESPONSIBLE, GameState.SETUP_TABLE,
             GameState.SEAT_PICKING, GameState.SETUP_BLINDS, GameState.DEALING,
@@ -396,33 +445,30 @@ async def handle_set_blinds(session_id: str, game: dict, msg: dict):
         sb = bb // 2
     game['sb'] = sb
     game['bb'] = bb
+    game['pot'] = sb + bb
+    game['last_bet'] = bb
+    game['street_bet_to'] = bb
 
-    # Если вызвано из SETUP_BLINDS — переходим к DEALING
+    # Из SETUP_BLINDS → сразу в PREFLOP (карты вводятся параллельно)
     if game['state'] == GameState.SETUP_BLINDS:
-        game['pot'] = sb + bb
-        game['last_bet'] = bb
-        game['street_bet_to'] = bb
-        game['state'] = GameState.DEALING
+        game['state'] = GameState.PREFLOP
         build_seats_from_claimed(game)
-    else:
-        # Пост-фактум — обновляем только значения, пот пересчитываем
-        game['pot'] = sb + bb
-        game['last_bet'] = bb
-        game['street_bet_to'] = bb
+        start_preflop(game)
 
     add_history(game, f"Блайнды: {sb}/{bb}")
     await broadcast(session_id)
 
 
 async def handle_skip_blinds(session_id: str, game: dict):
-    """Пропуск ввода блайндов — переход к раздаче без блайндов."""
+    """Пропуск ввода блайндов — сразу в PREFLOP."""
     game['sb'] = 0
     game['bb'] = 0
     game['pot'] = 0
     game['last_bet'] = 0
     game['street_bet_to'] = 0
-    game['state'] = GameState.DEALING
+    game['state'] = GameState.PREFLOP
     build_seats_from_claimed(game)
+    start_preflop(game)
     add_history(game, "Блайнды пропущены")
     await broadcast(session_id)
 
@@ -457,16 +503,13 @@ async def handle_set_my_cards(session_id: str, user_id: str, game: dict, msg: di
     name = seat['player'].get('name', pos)
     add_history(game, f"{name} ввёл карты")
 
-    # Если все наши ввели карты → переходим к PREFLOP
+    # Пересчитать equity если есть карты
     all_have_cards = all(
         len(game['seats'].get(p, {}).get('player', {}).get('cards', [])) == 2
         for p in game.get('player_positions', [])
     )
     if all_have_cards:
-        game['state'] = GameState.PREFLOP
-        start_preflop(game)
         await recalc(game)
-        add_history(game, "Все карты введены — начинаем")
 
     await broadcast(session_id)
 

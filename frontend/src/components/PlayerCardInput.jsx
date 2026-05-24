@@ -27,15 +27,14 @@ export default function PlayerCardInput({ send, userId }) {
   }
   for (const c of (state.board || [])) usedCards.push(c)
 
+  const myLabel = state.position_labels?.[myPos] || myPos
+
   if (hasCards) {
     return (
       <div className="bg-green-900/50 border border-green-600/50 rounded-xl p-3 mx-2">
         <div className="text-sm text-green-300 text-center">
-          Ваши карты ({myPos}): <span className="font-bold">{myCards.join(' ')}</span>
+          Ваши карты ({myLabel}): <span className="font-bold">{myCards.join(' ')}</span>
         </div>
-        {state.state === 'DEALING' && (
-          <div className="text-xs text-gray-400 text-center mt-1">Ожидание карт других игроков...</div>
-        )}
       </div>
     )
   }
@@ -47,7 +46,7 @@ export default function PlayerCardInput({ send, userId }) {
 
   return (
     <div className="bg-gray-800 rounded-xl p-3 mx-2">
-      <h3 className="text-sm font-bold mb-2 text-center">Введите свои карты ({myPos})</h3>
+      <h3 className="text-sm font-bold mb-2 text-center">Введите свои карты ({myLabel})</h3>
       {!showPicker ? (
         <button
           onClick={() => setShowPicker(true)}
