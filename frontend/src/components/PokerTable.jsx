@@ -58,7 +58,7 @@ export default function PokerTable() {
   const gs = state.state
 
   return (
-    <div className="relative w-full mt-8" style={{ paddingTop: '58%' }}>
+    <div className="relative w-full mt-8" style={{ paddingTop: 'min(58%, 320px)' }}>
       <div className="absolute inset-0">
         {/* Table felt */}
         <div className="absolute inset-[10%] rounded-[50%] bg-felt shadow-[inset_0_4px_30px_rgba(0,0,0,0.5)] border-4 border-felt-dark" />
