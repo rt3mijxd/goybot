@@ -8,6 +8,7 @@ export default function Card({ card, size = 'md', faceDown = false }) {
   if (!card || card === '??') faceDown = true
 
   const sizes = {
+    xs: { w: 26, h: 38, text: 'text-[9px]', suit: 'text-[10px]' },
     sm: { w: 36, h: 52, text: 'text-xs', suit: 'text-sm' },
     md: { w: 48, h: 68, text: 'text-sm', suit: 'text-lg' },
     lg: { w: 64, h: 90, text: 'text-base', suit: 'text-xl' },

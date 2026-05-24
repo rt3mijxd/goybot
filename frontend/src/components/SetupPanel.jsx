@@ -206,6 +206,12 @@ function BlindsInput({ send }) {
         >
           Начать игру
         </button>
+        <button
+          onClick={() => send({ action: 'skip_blinds' })}
+          className="w-full mt-2 bg-gray-600 hover:bg-gray-500 text-gray-300 font-semibold py-2.5 rounded-lg transition text-sm"
+        >
+          Пропустить (ввести позже)
+        </button>
       </div>
     </div>
   )

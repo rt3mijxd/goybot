@@ -23,6 +23,9 @@ const initialState = {
   responsible_name: '',
   members: {},
   seat_claimed: {},
+  dealer_pos: null,
+  sb_pos: null,
+  bb_pos: null,
   error: null,
 }
 

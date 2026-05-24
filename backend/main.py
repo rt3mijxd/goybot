@@ -84,10 +84,29 @@ def serialize_game(game: dict, user_id: str) -> dict:
         name = members.get(uid, uid[:6])
         claimed_out[pos] = {'user_id': uid, 'name': name}
 
+    # Определяем позиции BU, SB, BB для фишек
+    positions = g.get('positions', [])
+    dealer_pos = None
+    sb_pos = None
+    bb_pos = None
+    if len(positions) >= 2:
+        # В стандартном покере: BU = дилер, SB и BB определяются по позициям
+        if 'BU' in positions:
+            dealer_pos = 'BU'
+        if 'SB' in positions:
+            sb_pos = 'SB'
+        if 'BB' in positions:
+            bb_pos = 'BB'
+        # Для 2-max: BU = SB
+        if len(positions) == 2:
+            dealer_pos = 'BU'
+            sb_pos = 'BU'
+            bb_pos = 'BB'
+
     return {
         'state': g['state'].name,
         'table_size': g.get('table_size', 0),
-        'positions': g.get('positions', []),
+        'positions': positions,
         'player_positions': g.get('player_positions', []),
         'opponent_positions': g.get('opponent_positions', []),
         'seats': seats_out,
@@ -105,6 +124,9 @@ def serialize_game(game: dict, user_id: str) -> dict:
         'responsible_name': g.get('responsible_name', ''),
         'members': {uid: name for uid, name in members.items()},
         'seat_claimed': claimed_out,
+        'dealer_pos': dealer_pos,
+        'sb_pos': sb_pos,
+        'bb_pos': bb_pos,
     }
 
 
@@ -251,10 +273,17 @@ async def handle_message(session_id: str, user_id: str, msg: dict, ws: WebSocket
         if not is_responsible:
             return await send_error(ws, "только оператор может ставить блайнды")
         await handle_set_blinds(session_id, game, msg)
+    elif action == 'set_my_cards':
+        # Игрок сам вводит свои карты
+        await handle_set_my_cards(session_id, user_id, game, msg, ws)
     elif action == 'deal_cards':
         if not is_responsible:
             return await send_error(ws, "только оператор раздаёт карты")
         await handle_deal_cards(session_id, game, msg)
+    elif action == 'skip_blinds':
+        if not is_responsible:
+            return await send_error(ws, "только оператор")
+        await handle_skip_blinds(session_id, game)
     elif action == 'player_action':
         await handle_player_action(session_id, user_id, game, msg, ws)
     elif action == 'opp_action':
@@ -366,13 +395,78 @@ async def handle_set_blinds(session_id: str, game: dict, msg: dict):
         sb = bb // 2
     game['sb'] = sb
     game['bb'] = bb
-    game['pot'] = sb + bb
-    game['last_bet'] = bb
-    game['street_bet_to'] = bb
-    game['state'] = GameState.DEALING
 
-    build_seats_from_claimed(game)
+    # Если вызвано из SETUP_BLINDS — переходим к DEALING
+    if game['state'] == GameState.SETUP_BLINDS:
+        game['pot'] = sb + bb
+        game['last_bet'] = bb
+        game['street_bet_to'] = bb
+        game['state'] = GameState.DEALING
+        build_seats_from_claimed(game)
+    else:
+        # Пост-фактум — обновляем только значения, пот пересчитываем
+        game['pot'] = sb + bb
+        game['last_bet'] = bb
+        game['street_bet_to'] = bb
+
     add_history(game, f"Блайнды: {sb}/{bb}")
+    await broadcast(session_id)
+
+
+async def handle_skip_blinds(session_id: str, game: dict):
+    """Пропуск ввода блайндов — переход к раздаче без блайндов."""
+    game['sb'] = 0
+    game['bb'] = 0
+    game['pot'] = 0
+    game['last_bet'] = 0
+    game['street_bet_to'] = 0
+    game['state'] = GameState.DEALING
+    build_seats_from_claimed(game)
+    add_history(game, "Блайнды пропущены")
+    await broadcast(session_id)
+
+
+async def handle_set_my_cards(session_id: str, user_id: str, game: dict, msg: dict, ws: WebSocket):
+    """Игрок сам вводит свои карты."""
+    card_strs = msg.get('cards', [])
+    if len(card_strs) != 2:
+        return await send_error(ws, "нужно ровно 2 карты")
+
+    # Найти позицию этого игрока
+    pos = None
+    for p in game.get('player_positions', []):
+        s = game['seats'].get(p, {})
+        if s.get('player', {}).get('user_id') == user_id:
+            pos = p
+            break
+    if not pos:
+        return await send_error(ws, "вы не сидите за столом")
+
+    parsed = []
+    for cs in card_strs:
+        c = parse_card(cs)
+        if c:
+            parsed.append(c)
+    if len(parsed) != 2:
+        return await send_error(ws, "некорректные карты")
+
+    seat = game['seats'][pos]
+    seat['player']['cards'] = parsed
+
+    name = seat['player'].get('name', pos)
+    add_history(game, f"{name} ввёл карты")
+
+    # Если все наши ввели карты → переходим к PREFLOP
+    all_have_cards = all(
+        len(game['seats'].get(p, {}).get('player', {}).get('cards', [])) == 2
+        for p in game.get('player_positions', [])
+    )
+    if all_have_cards:
+        game['state'] = GameState.PREFLOP
+        start_preflop(game)
+        await recalc(game)
+        add_history(game, "Все карты введены — начинаем")
+
     await broadcast(session_id)
 
 
@@ -401,8 +495,9 @@ async def handle_deal_cards(session_id: str, game: dict, msg: dict):
 async def handle_player_action(session_id: str, user_id: str, game: dict, msg: dict, ws: WebSocket):
     act = msg.get('act', '').lower()
     pos = msg.get('position', '')
+    is_responsible = (user_id == game.get('responsible_id'))
 
-    if not pos:
+    if not pos and not is_responsible:
         for p in game.get('player_positions', []):
             s = game['seats'].get(p, {})
             if s.get('player', {}).get('user_id') == user_id:
@@ -413,7 +508,7 @@ async def handle_player_action(session_id: str, user_id: str, game: dict, msg: d
 
     seat = game['seats'].get(pos)
     if not seat or seat.get('type') != 'our':
-        return await send_error(ws, "это не ваше место")
+        return await send_error(ws, "это не место нашего игрока")
 
     if act == 'fold':
         seat['folded'] = True
