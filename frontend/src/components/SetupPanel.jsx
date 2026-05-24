@@ -113,7 +113,7 @@ function SeatPickerTable({ send, userId, sessionId }) {
       </button>
 
       {/* Визуальный стол для рассадки */}
-      <div className="relative w-full max-w-[500px]" style={{ paddingTop: '55%' }}>
+      <div className="relative w-full max-w-[460px] mx-auto" style={{ paddingTop: 'min(55%, 250px)' }}>
         <div className="absolute inset-0">
           <div className="absolute inset-[10%] rounded-[50%] bg-felt shadow-[inset_0_4px_30px_rgba(0,0,0,0.5)] border-4 border-felt-dark" />
 
