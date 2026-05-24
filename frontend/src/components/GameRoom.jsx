@@ -53,7 +53,7 @@ export default function GameRoom({ sessionId, userId, userName, role }) {
         </div>
       )}
 
-      {isSetup && <SetupPanel send={send} userId={userId} />}
+      {isSetup && <SetupPanel send={send} userId={userId} sessionId={sessionId} />}
 
       {isPlaying && (
         <div className="flex-1 flex flex-col lg:flex-row gap-2 p-2 overflow-auto">

@@ -1,7 +1,7 @@
-import React, { useState } from 'react'
+import React, { useState, useCallback } from 'react'
 import { useGame } from '../context/GameContext'
 
-export default function SetupPanel({ send, userId }) {
+export default function SetupPanel({ send, userId, sessionId }) {
   const { state } = useGame()
   const gs = state.state
 
@@ -26,7 +26,7 @@ export default function SetupPanel({ send, userId }) {
   }
 
   if (gs === 'SEAT_PICKING') {
-    return <SeatPickerTable send={send} userId={userId} />
+    return <SeatPickerTable send={send} userId={userId} sessionId={sessionId} />
   }
 
   if (gs === 'SETUP_BLINDS') {
@@ -72,8 +72,9 @@ const SEAT_POSITIONS_6 = {
   BB:  { x: 50, y: 95 },
 }
 
-function SeatPickerTable({ send, userId }) {
+function SeatPickerTable({ send, userId, sessionId }) {
   const { state } = useGame()
+  const [copied, setCopied] = useState(false)
   const positions = state.positions || []
   const claimedMap = state.seat_claimed || {}
   const isOperator = state.is_responsible
@@ -81,6 +82,14 @@ function SeatPickerTable({ send, userId }) {
 
   // Какое место занял текущий юзер
   const myPos = Object.entries(claimedMap).find(([, v]) => v.user_id === userId)?.[0]
+
+  const copyLink = useCallback(() => {
+    const url = `${window.location.origin}?session=${sessionId}`
+    navigator.clipboard.writeText(url).then(() => {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    })
+  }, [sessionId])
 
   return (
     <div className="flex-1 flex flex-col items-center justify-center p-4 gap-4">
@@ -90,6 +99,18 @@ function SeatPickerTable({ send, userId }) {
           ? 'Игроки выбирают места. Нажмите «Подтвердить» когда все сядут.'
           : 'Нажмите на место за столом чтобы занять его'}
       </p>
+
+      {/* Ссылка на сессию */}
+      <button
+        onClick={copyLink}
+        className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm transition ${
+          copied
+            ? 'bg-green-700 text-green-200'
+            : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
+        }`}
+      >
+        <span>{copied ? '✓ Скопировано!' : '📋 Скопировать ссылку на сессию'}</span>
+      </button>
 
       {/* Визуальный стол для рассадки */}
       <div className="relative w-full max-w-[500px]" style={{ paddingTop: '55%' }}>

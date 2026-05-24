@@ -5,8 +5,9 @@ function generateId() {
 }
 
 export default function LoginPage({ onJoin }) {
+  const urlSession = new URLSearchParams(window.location.search).get('session') || ''
   const [name, setName] = useState('')
-  const [joinId, setJoinId] = useState('')
+  const [joinId, setJoinId] = useState(urlSession)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
@@ -50,7 +51,7 @@ export default function LoginPage({ onJoin }) {
             type="text"
             value={name}
             onChange={(e) => { setName(e.target.value); setError('') }}
-            placeholder="Артём"
+            placeholder="Мойша"
             className="w-full bg-gray-700 rounded-lg px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-green-500"
             onKeyDown={(e) => e.key === 'Enter' && createSession()}
           />
