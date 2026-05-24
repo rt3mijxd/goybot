@@ -1,14 +1,9 @@
-import React, { useRef, useEffect } from 'react'
+import React from 'react'
 import { useGame } from '../context/GameContext'
 
 export default function HistoryLog() {
   const { state } = useGame()
   const history = state.history || []
-  const endRef = useRef(null)
-
-  useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [history.length])
 
   if (history.length === 0) return null
 
@@ -20,7 +15,6 @@ export default function HistoryLog() {
           {entry}
         </div>
       ))}
-      <div ref={endRef} />
     </div>
   )
 }

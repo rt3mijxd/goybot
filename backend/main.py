@@ -84,24 +84,21 @@ def serialize_game(game: dict, user_id: str) -> dict:
         name = members.get(uid, uid[:6])
         claimed_out[pos] = {'user_id': uid, 'name': name}
 
-    # Определяем позиции BU, SB, BB для фишек
+    # Определяем позиции дилера, SB, BB для фишек
     positions = g.get('positions', [])
     dealer_pos = None
     sb_pos = None
     bb_pos = None
     if len(positions) >= 2:
-        # В стандартном покере: BU = дилер, SB и BB определяются по позициям
-        if 'BU' in positions:
-            dealer_pos = 'BU'
-        if 'SB' in positions:
-            sb_pos = 'SB'
-        if 'BB' in positions:
-            bb_pos = 'BB'
-        # Для 2-max: BU = SB
+        dealer_idx = g.get('dealer_idx', 0) % len(positions)
+        dealer_pos = positions[dealer_idx]
         if len(positions) == 2:
-            dealer_pos = 'BU'
-            sb_pos = 'BU'
-            bb_pos = 'BB'
+            # Хедз-ап: дилер = SB
+            sb_pos = positions[dealer_idx]
+            bb_pos = positions[(dealer_idx + 1) % len(positions)]
+        else:
+            sb_pos = positions[(dealer_idx + 1) % len(positions)]
+            bb_pos = positions[(dealer_idx + 2) % len(positions)]
 
     return {
         'state': g['state'].name,
@@ -127,6 +124,10 @@ def serialize_game(game: dict, user_id: str) -> dict:
         'dealer_pos': dealer_pos,
         'sb_pos': sb_pos,
         'bb_pos': bb_pos,
+        'street_complete': g.get('current_turn') is None and g['state'] not in (
+            GameState.SETUP_RESPONSIBLE, GameState.SETUP_TABLE,
+            GameState.SEAT_PICKING, GameState.SETUP_BLINDS, GameState.DEALING,
+        ),
     }
 
 
@@ -631,6 +632,10 @@ async def handle_opp_action(session_id: str, game: dict, msg: dict):
 
 
 async def handle_board(session_id: str, game: dict, msg: dict):
+    # Проверяем, что все действия на текущей улице завершены
+    if game.get('current_turn') is not None:
+        return  # нельзя вводить борд пока не все действия завершены
+
     card_strs: list = msg.get('cards', [])
     parsed = []
     for cs in card_strs:

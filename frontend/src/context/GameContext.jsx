@@ -26,6 +26,7 @@ const initialState = {
   dealer_pos: null,
   sb_pos: null,
   bb_pos: null,
+  street_complete: false,
   error: null,
 }
 

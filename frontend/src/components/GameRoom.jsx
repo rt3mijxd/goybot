@@ -3,8 +3,6 @@ import { useGame } from '../context/GameContext'
 import useGameSocket from '../hooks/useGameSocket'
 import SetupPanel from './SetupPanel'
 import PokerTable from './PokerTable'
-import ActionPanel from './ActionPanel'
-import OppActionPanel from './OppActionPanel'
 import BoardPicker from './BoardPicker'
 import RecommendationBox from './RecommendationBox'
 import TeamStats from './TeamStats'
@@ -61,15 +59,15 @@ export default function GameRoom({ sessionId, userId, userName, role }) {
         <div className="flex-1 flex flex-col lg:flex-row gap-2 p-2 overflow-auto">
           {/* Левая колонка: стол + панели */}
           <div className="flex-1 flex flex-col gap-2 min-w-0">
-            {/* Стол — ограничен по размеру */}
+            {/* Стол */}
             <div className="lg:max-w-[600px] w-full mx-auto">
               <PokerTable />
             </div>
 
-            {/* ===== ОПЕРАТОР: управление ===== */}
+            {/* ===== ОПЕРАТОР ===== */}
             {isOperator && (
               <>
-                {/* Раздача карт (оператор не раздаёт сам — игроки вводят, но оператор видит статус) */}
+                {/* Ожидание карт */}
                 {gs === 'DEALING' && <DealingStatus />}
 
                 {/* Статистика + рекомендация */}
@@ -78,22 +76,19 @@ export default function GameRoom({ sessionId, userId, userName, role }) {
                   <RecommendationBox />
                 </div>
 
-                {/* Борд + действия оппонентов */}
-                {gs !== 'DEALING' && (
-                  <div className="flex gap-2 flex-wrap">
-                    <BoardPicker send={send} />
-                    <OppActionPanel send={send} />
-                  </div>
+                {/* Единая панель действий: все игроки по порядку хода */}
+                {gs !== 'DEALING' && gs !== 'SHOWDOWN' && (
+                  <UnifiedActionPanel send={send} />
                 )}
 
-                {/* Действия НАШИХ игроков (оператор отмечает) */}
-                {gs !== 'DEALING' && gs !== 'SHOWDOWN' && (
-                  <OperatorPlayerActions send={send} />
+                {/* Борд — только когда все действия на улице завершены */}
+                {gs !== 'DEALING' && gs !== 'SHOWDOWN' && state.street_complete && (
+                  <BoardPicker send={send} />
                 )}
 
                 {/* Кнопки управления */}
                 <div className="flex gap-2 flex-wrap">
-                  {gs === 'SHOWDOWN' && (
+                  {(gs === 'SHOWDOWN' || gs === 'RIVER' || gs === 'TURN' || gs === 'FLOP' || gs === 'PREFLOP') && (
                     <button
                       onClick={() => send({ action: 'next_round' })}
                       className="flex-1 bg-yellow-600 hover:bg-yellow-700 text-white font-semibold py-2.5 rounded-lg transition text-sm"
@@ -118,16 +113,10 @@ export default function GameRoom({ sessionId, userId, userName, role }) {
               </>
             )}
 
-            {/* ===== ИГРОК: свои карты + рекомендации ===== */}
+            {/* ===== ИГРОК ===== */}
             {!isOperator && (
               <>
-                {/* Ввод своих карт */}
-                {gs === 'DEALING' && <PlayerCardInput send={send} userId={userId} />}
-
-                {/* Показать свои карты если уже введены */}
-                {gs !== 'DEALING' && <PlayerCardInput send={send} userId={userId} />}
-
-                {/* Рекомендации для игрока */}
+                <PlayerCardInput send={send} userId={userId} />
                 <div className="flex gap-2 flex-wrap">
                   <TeamStats />
                   <RecommendationBox />
@@ -144,13 +133,13 @@ export default function GameRoom({ sessionId, userId, userName, role }) {
   )
 }
 
-/* Статус раздачи для оператора — кто уже ввёл карты */
+/* Статус раздачи для оператора */
 function DealingStatus() {
   const { state } = useGame()
   const playerPositions = state.player_positions || []
 
   return (
-    <div className="bg-gray-800 rounded-xl p-3 mx-2">
+    <div className="bg-gray-800 rounded-xl p-3">
       <h3 className="text-sm font-bold mb-2">Ожидание карт игроков</h3>
       <div className="flex gap-2 flex-wrap">
         {playerPositions.map((pos) => {
@@ -171,62 +160,139 @@ function DealingStatus() {
   )
 }
 
-/* Оператор отмечает действия наших игроков */
-function OperatorPlayerActions({ send }) {
+/* Единая панель действий — все игроки по порядку хода */
+function UnifiedActionPanel({ send }) {
   const { state } = useGame()
   const [raiseAmounts, setRaiseAmounts] = useState({})
 
-  const playerPositions = (state.player_positions || []).filter((pos) => {
+  const positions = state.positions || []
+  const currentTurn = state.current_turn
+  const pot = state.pot || 0
+
+  // Все активные (не фолднувшие) игроки в порядке позиций
+  const activePlayers = positions.filter((pos) => {
     const seat = state.seats?.[pos]
-    return seat && !seat.folded
+    return seat && seat.type !== 'empty' && !seat.folded
   })
 
-  if (playerPositions.length === 0) return null
+  if (activePlayers.length === 0) return null
 
   const act = (pos, action, extra = {}) => {
-    send({ action: 'player_action', position: pos, act: action, ...extra })
+    const seat = state.seats?.[pos]
+    if (!seat) return
+    if (seat.type === 'our') {
+      send({ action: 'player_action', position: pos, act: action, ...extra })
+    } else {
+      send({ action: 'opp_action', position: pos, act: action, ...extra })
+    }
     setRaiseAmounts((prev) => ({ ...prev, [pos]: '' }))
   }
 
+  // Пресеты рейза в % от банка
+  const raisePresets = [
+    { label: '33%', mult: 0.33 },
+    { label: '50%', mult: 0.5 },
+    { label: '75%', mult: 0.75 },
+    { label: '100%', mult: 1.0 },
+    { label: '150%', mult: 1.5 },
+  ]
+
   return (
     <div className="bg-gray-800 rounded-xl p-3">
-      <span className="text-sm font-semibold text-green-400 block mb-2">Действия наших игроков</span>
-      {playerPositions.map((pos) => {
+      <div className="flex items-center gap-2 mb-2">
+        <span className="text-sm font-semibold text-gray-300">Действия игроков</span>
+        {currentTurn && (
+          <span className="text-xs bg-yellow-600/30 text-yellow-300 px-2 py-0.5 rounded">
+            Ход: {currentTurn}
+          </span>
+        )}
+        {!currentTurn && (
+          <span className="text-xs bg-green-600/30 text-green-300 px-2 py-0.5 rounded">
+            Все действия завершены
+          </span>
+        )}
+      </div>
+      {activePlayers.map((pos) => {
         const seat = state.seats[pos]
-        const name = seat?.player?.name || pos
-        const isCurrentTurn = state.current_turn === pos
+        const isOur = seat.type === 'our'
+        const isCurrentTurn = currentTurn === pos
+        const num = seat?.player?.number || '?'
+        const name = isOur
+          ? (seat.player?.name || `Д${num}`)
+          : `В${num}`
         const ra = raiseAmounts[pos] || ''
+
         return (
-          <div key={pos} className={`flex items-center gap-2 mb-2 ${isCurrentTurn ? 'bg-gray-700/50 rounded-lg p-1' : ''}`}>
-            <span className={`text-xs font-bold w-20 ${isCurrentTurn ? 'text-yellow-400' : 'text-green-400'}`}>
+          <div
+            key={pos}
+            className={`flex items-center gap-2 mb-1.5 rounded-lg p-1.5 transition-all ${
+              isCurrentTurn
+                ? 'bg-yellow-900/30 ring-1 ring-yellow-500/50'
+                : 'opacity-40'
+            }`}
+          >
+            <span className={`text-xs font-bold w-24 shrink-0 ${
+              isCurrentTurn
+                ? 'text-yellow-400'
+                : isOur ? 'text-green-400' : 'text-red-400'
+            }`}>
               {name} ({pos})
             </span>
-            <div className="flex gap-1 flex-wrap">
+            <div className={`flex gap-1 flex-wrap ${!isCurrentTurn ? 'pointer-events-none' : ''}`}>
               <button onClick={() => act(pos, 'fold')}
-                className="bg-red-800 hover:bg-red-700 text-white text-xs px-2 py-1 rounded transition">
+                disabled={!isCurrentTurn}
+                className="bg-red-800 hover:bg-red-700 disabled:opacity-30 text-white text-xs px-2 py-1 rounded transition">
                 Фолд
               </button>
               <button onClick={() => act(pos, 'check')}
-                className="bg-gray-600 hover:bg-gray-500 text-white text-xs px-2 py-1 rounded transition">
+                disabled={!isCurrentTurn}
+                className="bg-gray-600 hover:bg-gray-500 disabled:opacity-30 text-white text-xs px-2 py-1 rounded transition">
                 Чек
               </button>
               <button onClick={() => act(pos, 'call')}
-                className="bg-blue-700 hover:bg-blue-600 text-white text-xs px-2 py-1 rounded transition">
+                disabled={!isCurrentTurn}
+                className="bg-blue-700 hover:bg-blue-600 disabled:opacity-30 text-white text-xs px-2 py-1 rounded transition">
                 Колл
               </button>
-              <div className="flex gap-0.5">
+              {!isOur && (
+                <button onClick={() => act(pos, 'limp')}
+                  disabled={!isCurrentTurn}
+                  className="bg-gray-600 hover:bg-gray-500 disabled:opacity-30 text-white text-xs px-2 py-1 rounded transition">
+                  Лимп
+                </button>
+              )}
+              <div className="flex gap-0.5 items-center">
                 <input
                   type="number"
                   value={ra}
                   onChange={(e) => setRaiseAmounts((prev) => ({ ...prev, [pos]: e.target.value }))}
                   placeholder="Сумма"
-                  className="w-16 bg-gray-700 rounded px-1 py-1 text-white text-xs focus:outline-none"
+                  disabled={!isCurrentTurn}
+                  className="w-16 bg-gray-700 rounded px-1 py-1 text-white text-xs focus:outline-none disabled:opacity-30"
                 />
                 <button onClick={() => act(pos, 'raise', { amount: parseInt(ra) || 0 })}
-                  className="bg-green-700 hover:bg-green-600 text-white text-xs px-2 py-1 rounded transition">
+                  disabled={!isCurrentTurn}
+                  className="bg-orange-700 hover:bg-orange-600 disabled:opacity-30 text-white text-xs px-2 py-1 rounded transition">
                   Рейз
                 </button>
               </div>
+              {/* Пресеты % от банка */}
+              {isCurrentTurn && pot > 0 && (
+                <div className="flex gap-0.5">
+                  {raisePresets.map((p) => (
+                    <button
+                      key={p.label}
+                      onClick={() => {
+                        const amt = Math.round(pot * p.mult)
+                        setRaiseAmounts((prev) => ({ ...prev, [pos]: String(amt) }))
+                      }}
+                      className="bg-gray-700 hover:bg-gray-600 text-gray-300 text-[10px] px-1.5 py-0.5 rounded transition"
+                    >
+                      {p.label}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         )

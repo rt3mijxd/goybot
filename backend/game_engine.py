@@ -1509,26 +1509,16 @@ def add_history(game, entry):
         hist.pop(0)
 
 
-def rotate_positions(game):
-    positions = game['positions']
-    if len(positions) < 2: return
-    old_claimed = dict(game.get('seat_claimed', {}))
-    if not old_claimed: return
-    new_claimed = {}
-    for uid, old_pos in old_claimed.items():
-        if old_pos not in positions:
-            new_claimed[uid] = old_pos
-            continue
-        idx = positions.index(old_pos)
-        new_pos = positions[(idx - 1) % len(positions)]
-        new_claimed[uid] = new_pos
-    game['seat_claimed'] = new_claimed
-    build_seats_from_claimed(game)
-
-
 def reset_for_new_round(game):
-    rotate_positions(game)
-    for pos in game['positions']:
+    """Сброс для нового раунда. Позиции игроков НЕ меняются, двигается только дилер."""
+    # Ротация дилера: сдвигаем dealer_idx на 1
+    positions = game['positions']
+    if len(positions) >= 2:
+        dealer_idx = game.get('dealer_idx', 0)
+        dealer_idx = (dealer_idx + 1) % len(positions)
+        game['dealer_idx'] = dealer_idx
+
+    for pos in positions:
         s = game['seats'].get(pos)
         if not s: continue
         if s['type'] == 'our':
@@ -1544,6 +1534,7 @@ def reset_for_new_round(game):
     game['last_bet'] = game['bb']
     game['team_win_pct'] = 0.0
     game['opp_actions'] = {}
+    game['opp_preflop_action'] = {}
     game['preflop_aggressor'] = None
     game['flop_aggressor'] = None
     game['flop_bet_size'] = 0.0
@@ -1554,6 +1545,8 @@ def reset_for_new_round(game):
     game['state'] = GameState.DEALING
     game['street_contrib'] = {}
     game['street_bet_to'] = game['bb']
+    game['recommendation'] = None
+    game['recommendation_pos'] = None
 
 
 def build_seats_from_claimed(game):
@@ -1562,10 +1555,11 @@ def build_seats_from_claimed(game):
     for pos in ALL_POSITIONS:
         seats[pos] = {'type': 'empty'}
     claimed = game.get('seat_claimed', {})
+    members = game.get('members', {})
     our_num = 1
     for uid, pos in claimed.items():
         if pos not in positions: continue
-        name = game.get('known_players', {}).get(pos) or f"Д{our_num}"
+        name = members.get(uid) or f"Д{our_num}"
         seats[pos] = {
             'type': 'our', 'folded': False,
             'player': {
