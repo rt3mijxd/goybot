@@ -21,6 +21,8 @@ const initialState = {
   opp_actions: {},
   is_responsible: false,
   responsible_name: '',
+  members: {},
+  seat_claimed: {},
   error: null,
 }
 

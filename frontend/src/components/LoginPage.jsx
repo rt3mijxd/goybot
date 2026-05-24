@@ -18,7 +18,7 @@ export default function LoginPage({ onJoin }) {
       const res = await fetch(`${apiBase}/api/session/new`, { method: 'POST' })
       const data = await res.json()
       const userId = generateId()
-      onJoin(data.session_id, userId, name.trim())
+      onJoin(data.session_id, userId, name.trim(), 'operator')
     } catch (e) {
       setError('Ошибка создания сессии')
     }
@@ -29,13 +29,13 @@ export default function LoginPage({ onJoin }) {
     if (!name.trim()) return setError('Введите имя')
     if (!joinId.trim()) return setError('Введите ID сессии')
     const userId = generateId()
-    onJoin(joinId.trim(), userId, name.trim())
+    onJoin(joinId.trim(), userId, name.trim(), 'player')
   }
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-900 p-4">
       <div className="bg-gray-800 rounded-2xl p-8 w-full max-w-md shadow-2xl">
-        <h1 className="text-3xl font-bold text-center mb-2">Гойбот 2.0</h1>
+        <h1 className="text-3xl font-bold text-center mb-1">Гойбот 2.0</h1>
         <p className="text-gray-400 text-center mb-8">Mogger Edition</p>
 
         {error && (
@@ -59,17 +59,20 @@ export default function LoginPage({ onJoin }) {
         <button
           onClick={createSession}
           disabled={loading}
-          className="w-full bg-green-600 hover:bg-green-700 text-white font-semibold py-3 rounded-lg mb-6 transition disabled:opacity-50"
+          className="w-full bg-green-600 hover:bg-green-700 text-white font-semibold py-3 rounded-lg mb-2 transition disabled:opacity-50"
         >
-          {loading ? 'Создаём...' : 'Создать новую сессию'}
+          {loading ? 'Создаём...' : 'Создать сессию (оператор)'}
         </button>
+        <p className="text-gray-500 text-xs text-center mb-6">
+          Оператор управляет столом, но не участвует в игре
+        </p>
 
         <div className="relative mb-6">
           <div className="absolute inset-0 flex items-center">
             <div className="w-full border-t border-gray-700" />
           </div>
           <div className="relative flex justify-center">
-            <span className="bg-gray-800 px-4 text-gray-500 text-sm">или присоединиться</span>
+            <span className="bg-gray-800 px-4 text-gray-500 text-sm">присоединиться как игрок</span>
           </div>
         </div>
 

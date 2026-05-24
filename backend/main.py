@@ -38,6 +38,9 @@ def serialize_game(game: dict, user_id: str) -> dict:
     responsible = g.get('responsible_id')
     is_responsible = (user_id == responsible)
 
+    # Список участников сессии (имена)
+    members = g.get('members', {})
+
     seats_out = {}
     for pos in ALL_POSITIONS:
         raw = g['seats'].get(pos, {'type': 'empty'})
@@ -75,6 +78,12 @@ def serialize_game(game: dict, user_id: str) -> dict:
     for pos, act in g.get('opp_actions', {}).items():
         opp_actions_out[pos] = act or ''
 
+    # seat_claimed: {user_id: pos} -> для фронтенда
+    claimed_out = {}
+    for uid, pos in g.get('seat_claimed', {}).items():
+        name = members.get(uid, uid[:6])
+        claimed_out[pos] = {'user_id': uid, 'name': name}
+
     return {
         'state': g['state'].name,
         'table_size': g.get('table_size', 0),
@@ -94,6 +103,8 @@ def serialize_game(game: dict, user_id: str) -> dict:
         'opp_actions': opp_actions_out,
         'is_responsible': is_responsible,
         'responsible_name': g.get('responsible_name', ''),
+        'members': {uid: name for uid, name in members.items()},
+        'seat_claimed': claimed_out,
     }
 
 
@@ -225,37 +236,47 @@ async def handle_message(session_id: str, user_id: str, msg: dict, ws: WebSocket
         await handle_join(session_id, user_id, msg, ws)
     elif action == 'set_table':
         if not is_responsible:
-            return await send_error(ws, "только ведущий может настраивать стол")
+            return await send_error(ws, "только оператор может настраивать стол")
         await handle_set_table(session_id, game, msg)
     elif action == 'claim_seat':
+        # Игроки выбирают места (не оператор)
+        if is_responsible:
+            return await send_error(ws, "оператор не занимает место за столом")
         await handle_claim_seat(session_id, user_id, game, msg)
-    elif action == 'ready_for_blinds':
+    elif action == 'confirm_seats':
         if not is_responsible:
-            return await send_error(ws, "только ведущий")
-        game['state'] = GameState.SETUP_BLINDS
-        await broadcast(session_id)
+            return await send_error(ws, "только оператор подтверждает рассадку")
+        await handle_confirm_seats(session_id, game)
     elif action == 'set_blinds':
         if not is_responsible:
-            return await send_error(ws, "только ведущий может ставить блайнды")
+            return await send_error(ws, "только оператор может ставить блайнды")
         await handle_set_blinds(session_id, game, msg)
     elif action == 'deal_cards':
         if not is_responsible:
-            return await send_error(ws, "только ведущий раздаёт карты")
+            return await send_error(ws, "только оператор раздаёт карты")
         await handle_deal_cards(session_id, game, msg)
     elif action == 'player_action':
         await handle_player_action(session_id, user_id, game, msg, ws)
     elif action == 'opp_action':
         if not is_responsible:
-            return await send_error(ws, "только ведущий управляет оппонентами")
+            return await send_error(ws, "только оператор управляет оппонентами")
         await handle_opp_action(session_id, game, msg)
     elif action == 'board':
         if not is_responsible:
-            return await send_error(ws, "только ведущий выкладывает борд")
+            return await send_error(ws, "только оператор выкладывает борд")
         await handle_board(session_id, game, msg)
     elif action == 'next_round':
         if not is_responsible:
-            return await send_error(ws, "только ведущий начинает раунд")
+            return await send_error(ws, "только оператор начинает раунд")
         await handle_next_round(session_id, game)
+    elif action == 'new_game':
+        if not is_responsible:
+            return await send_error(ws, "только оператор")
+        await handle_new_game(session_id, game)
+    elif action == 'reconfigure':
+        if not is_responsible:
+            return await send_error(ws, "только оператор")
+        await handle_reconfigure(session_id, game)
     elif action == 'pong':
         pass
     else:
@@ -269,12 +290,19 @@ async def handle_message(session_id: str, user_id: str, msg: dict, ws: WebSocket
 async def handle_join(session_id: str, user_id: str, msg: dict, ws: WebSocket):
     game = SESSIONS[session_id]['game']
     name = msg.get('name', f'Игрок {user_id[:4]}')
+    role = msg.get('role', 'player')  # 'operator' или 'player'
 
-    if game['state'] == GameState.SETUP_RESPONSIBLE and not game.get('responsible_id'):
+    members = game.setdefault('members', {})
+    members[user_id] = name
+
+    if role == 'operator' and not game.get('responsible_id'):
         game['responsible_id'] = user_id
         game['responsible_name'] = name
         game['state'] = GameState.SETUP_TABLE
-        add_history(game, f"{name} — ведущий")
+        add_history(game, f"{name} — оператор")
+    elif role == 'operator' and game.get('responsible_id') == user_id:
+        # Переподключение оператора
+        game['responsible_name'] = name
     else:
         add_history(game, f"{name} подключился")
 
@@ -287,6 +315,7 @@ async def handle_set_table(session_id: str, game: dict, msg: dict):
     game['table_size'] = size
     game['positions'] = list(TABLE_POSITIONS.get(size, TABLE_POSITIONS[6]))
     game['seats'] = {pos: {'type': 'empty'} for pos in ALL_POSITIONS}
+    game['seat_claimed'] = {}
     game['state'] = GameState.SEAT_PICKING
     add_history(game, f"Стол: {size} мест")
     await broadcast(session_id)
@@ -300,19 +329,31 @@ async def handle_claim_seat(session_id: str, user_id: str, game: dict, msg: dict
     claimed = game.setdefault('seat_claimed', {})
     old_pos = claimed.get(user_id)
     if old_pos == pos:
+        # Снять выбор
         claimed.pop(user_id, None)
     else:
+        # Снять старое место если было
         for uid, p in list(claimed.items()):
             if p == pos:
                 claimed.pop(uid, None)
         claimed[user_id] = pos
 
-    name = msg.get('name', '')
-    if name:
-        game.setdefault('known_players', {})[pos] = name
+    name = game.get('members', {}).get(user_id, user_id[:6])
+    game.setdefault('known_players', {})[pos] = name
 
     build_seats_from_claimed(game)
-    add_history(game, f"Место {pos} → {name or user_id[:6]}")
+    await broadcast(session_id)
+
+
+async def handle_confirm_seats(session_id: str, game: dict):
+    """Оператор подтверждает рассадку → переход к блайндам."""
+    claimed = game.get('seat_claimed', {})
+    if not claimed:
+        return  # нет ни одного игрока
+
+    build_seats_from_claimed(game)
+    game['state'] = GameState.SETUP_BLINDS
+    add_history(game, "Рассадка подтверждена")
     await broadcast(session_id)
 
 
@@ -528,6 +569,44 @@ async def handle_board(session_id: str, game: dict, msg: dict):
 async def handle_next_round(session_id: str, game: dict):
     reset_for_new_round(game)
     add_history(game, "Новый раунд")
+    await broadcast(session_id)
+
+
+async def handle_new_game(session_id: str, game: dict):
+    """Полный сброс — но участники остаются в сессии."""
+    members = dict(game.get('members', {}))
+    responsible_id = game.get('responsible_id')
+    responsible_name = game.get('responsible_name')
+
+    new = make_game()
+    new['members'] = members
+    new['responsible_id'] = responsible_id
+    new['responsible_name'] = responsible_name
+    new['state'] = GameState.SETUP_TABLE
+
+    SESSIONS[session_id]['game'] = new
+    add_history(new, "Новая игра")
+    await broadcast(session_id)
+
+
+async def handle_reconfigure(session_id: str, game: dict):
+    """Сброс размера стола и рассадки, блайнды сохраняются."""
+    members = dict(game.get('members', {}))
+    responsible_id = game.get('responsible_id')
+    responsible_name = game.get('responsible_name')
+    sb = game.get('sb', 0)
+    bb = game.get('bb', 0)
+
+    new = make_game()
+    new['members'] = members
+    new['responsible_id'] = responsible_id
+    new['responsible_name'] = responsible_name
+    new['sb'] = sb
+    new['bb'] = bb
+    new['state'] = GameState.SETUP_TABLE
+
+    SESSIONS[session_id]['game'] = new
+    add_history(new, "Реконфигурация")
     await broadcast(session_id)
 
 

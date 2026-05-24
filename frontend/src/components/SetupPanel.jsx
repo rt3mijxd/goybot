@@ -8,32 +8,32 @@ export default function SetupPanel({ send, userId }) {
   if (gs === 'SETUP_RESPONSIBLE' || !gs) {
     return (
       <div className="flex-1 flex items-center justify-center">
-        <p className="text-gray-400 text-lg">Ожидание подключения ведущего...</p>
+        <p className="text-gray-400 text-lg">Ожидание оператора...</p>
       </div>
     )
   }
 
-  if (gs === 'SETUP_TABLE' && state.is_responsible) {
-    return <TableSizeSelector send={send} />
-  }
-
-  if (gs === 'SETUP_TABLE' && !state.is_responsible) {
+  if (gs === 'SETUP_TABLE') {
+    if (state.is_responsible) return <TableSizeSelector send={send} />
     return (
-      <div className="flex-1 flex items-center justify-center">
-        <p className="text-gray-400">Ведущий настраивает стол...</p>
+      <div className="flex-1 flex items-center justify-center p-4">
+        <div className="text-center">
+          <p className="text-gray-400 text-lg mb-2">Оператор настраивает стол...</p>
+          <p className="text-gray-500 text-sm">Ожидайте выбора мест</p>
+        </div>
       </div>
     )
   }
 
   if (gs === 'SEAT_PICKING') {
-    return <SeatPicker send={send} userId={userId} />
+    return <SeatPickerTable send={send} userId={userId} />
   }
 
   if (gs === 'SETUP_BLINDS') {
     if (state.is_responsible) return <BlindsInput send={send} />
     return (
       <div className="flex-1 flex items-center justify-center">
-        <p className="text-gray-400">Ведущий устанавливает блайнды...</p>
+        <p className="text-gray-400">Оператор устанавливает блайнды...</p>
       </div>
     )
   }
@@ -62,59 +62,92 @@ function TableSizeSelector({ send }) {
   )
 }
 
-function SeatPicker({ send, userId }) {
+/* Рассадка — визуальный стол */
+const SEAT_POSITIONS_6 = {
+  UTG: { x: 15, y: 75 },
+  MP:  { x: 15, y: 25 },
+  CO:  { x: 50, y: 5 },
+  BU:  { x: 85, y: 25 },
+  SB:  { x: 85, y: 75 },
+  BB:  { x: 50, y: 95 },
+}
+
+function SeatPickerTable({ send, userId }) {
   const { state } = useGame()
   const positions = state.positions || []
+  const claimedMap = state.seat_claimed || {}
+  const isOperator = state.is_responsible
+  const hasClaimed = Object.keys(claimedMap).length > 0
 
-  const claimed = {}
-  for (const pos of positions) {
-    const seat = state.seats?.[pos]
-    if (seat?.type === 'our' && seat.player) {
-      claimed[pos] = seat.player.name || seat.player.user_id
-    }
-  }
-
-  const myPos = Object.entries(state.seats || {}).find(
-    ([, s]) => s?.player?.user_id === userId
-  )?.[0]
+  // Какое место занял текущий юзер
+  const myPos = Object.entries(claimedMap).find(([, v]) => v.user_id === userId)?.[0]
 
   return (
-    <div className="flex-1 flex items-center justify-center p-4">
-      <div className="bg-gray-800 rounded-2xl p-8 max-w-lg w-full">
-        <h2 className="text-xl font-bold mb-2 text-center">Выберите место</h2>
-        <p className="text-gray-400 text-sm text-center mb-6">Остальные места станут оппонентами</p>
-        <div className="grid grid-cols-3 gap-3 mb-6">
+    <div className="flex-1 flex flex-col items-center justify-center p-4 gap-4">
+      <h2 className="text-xl font-bold">Выберите места</h2>
+      <p className="text-gray-400 text-sm">
+        {isOperator
+          ? 'Игроки выбирают места. Нажмите «Подтвердить» когда все сядут.'
+          : 'Нажмите на место за столом чтобы занять его'}
+      </p>
+
+      {/* Визуальный стол для рассадки */}
+      <div className="relative w-full max-w-[500px]" style={{ paddingTop: '55%' }}>
+        <div className="absolute inset-0">
+          <div className="absolute inset-[10%] rounded-[50%] bg-felt shadow-[inset_0_4px_30px_rgba(0,0,0,0.5)] border-4 border-felt-dark" />
+
           {positions.map((pos) => {
-            const isMine = pos === myPos
-            const owner = claimed[pos]
+            const coords = SEAT_POSITIONS_6[pos]
+            if (!coords) return null
+            const claimed = claimedMap[pos]
+            const isMine = myPos === pos
             return (
               <button
                 key={pos}
-                onClick={() => send({ action: 'claim_seat', position: pos })}
-                className={`py-4 rounded-xl text-center transition font-semibold ${
-                  isMine
-                    ? 'bg-green-600 text-white ring-2 ring-green-400'
-                    : owner
-                    ? 'bg-blue-700 text-white'
-                    : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
-                }`}
+                onClick={() => {
+                  if (!isOperator) {
+                    send({ action: 'claim_seat', position: pos })
+                  }
+                }}
+                disabled={isOperator}
+                className="absolute -translate-x-1/2 -translate-y-1/2 z-20"
+                style={{ left: `${coords.x}%`, top: `${coords.y}%` }}
               >
-                <div className="text-lg">{pos}</div>
-                {owner && <div className="text-xs mt-1 opacity-80">{owner}</div>}
+                <div
+                  className={`w-16 h-16 rounded-full flex flex-col items-center justify-center text-sm font-bold border-2 transition-all cursor-pointer
+                    ${isMine
+                      ? 'border-green-400 bg-green-600 ring-2 ring-green-400/50 text-white'
+                      : claimed
+                      ? 'border-blue-400 bg-blue-700 text-white'
+                      : 'border-gray-500 bg-gray-700/80 text-gray-300 hover:bg-gray-600 hover:border-gray-400'
+                    }
+                    ${isOperator ? 'cursor-default' : ''}
+                  `}
+                >
+                  <span className="text-xs font-bold">{pos}</span>
+                  {claimed && <span className="text-[10px] mt-0.5 truncate max-w-[50px]">{claimed.name}</span>}
+                </div>
               </button>
             )
           })}
         </div>
-        {state.is_responsible && (
-          <button
-            onClick={() => send({ action: 'ready_for_blinds' })}
-            disabled={!myPos}
-            className="w-full bg-green-600 hover:bg-green-700 disabled:opacity-40 text-white font-semibold py-3 rounded-lg transition"
-          >
-            Далее — блайнды
-          </button>
-        )}
       </div>
+
+      {/* Информация и кнопки */}
+      <div className="text-center text-sm text-gray-400">
+        {!isOperator && !myPos && <span>Нажмите на свободное место</span>}
+        {!isOperator && myPos && <span>Вы заняли место {myPos}. Нажмите ещё раз чтобы убрать.</span>}
+      </div>
+
+      {isOperator && (
+        <button
+          onClick={() => send({ action: 'confirm_seats' })}
+          disabled={!hasClaimed}
+          className="bg-green-600 hover:bg-green-700 disabled:opacity-40 text-white font-semibold py-3 px-8 rounded-lg transition"
+        >
+          Подтвердить рассадку
+        </button>
+      )}
     </div>
   )
 }
