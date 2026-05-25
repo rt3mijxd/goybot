@@ -125,6 +125,7 @@ def serialize_game(game: dict, user_id: str) -> dict:
             bb_pos = positions[(dealer_idx + 2) % n]
 
     # Краткая рекомендация для каждого нашего игрока
+    pot = g.get('pot', 0)
     per_player_recs = {}
     for pos in g.get('player_positions', []):
         seat = g['seats'].get(pos, {})
@@ -138,7 +139,8 @@ def serialize_game(game: dict, user_id: str) -> dict:
             continue
         # Простая краткая рекомендация на основе equity
         if eq >= 60:
-            per_player_recs[pos] = 'РЕЙЗ'
+            raise_amt = int(round(pot * 0.75)) if pot > 0 else 0
+            per_player_recs[pos] = f'РЕЙЗ {raise_amt}' if raise_amt else 'РЕЙЗ'
         elif eq >= 40:
             per_player_recs[pos] = 'КОЛЛ'
         elif eq >= 25:

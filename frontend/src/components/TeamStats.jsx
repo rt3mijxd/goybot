@@ -1,11 +1,13 @@
 import React from 'react'
 import { useGame } from '../context/GameContext'
 
-const REC_COLORS = {
-  'РЕЙЗ': 'text-orange-400',
-  'КОЛЛ': 'text-blue-400',
-  'ЧЕК/КОЛЛ': 'text-cyan-400',
-  'ФОЛД': 'text-red-400',
+function recColor(rec) {
+  if (!rec) return 'text-gray-500'
+  if (rec.startsWith('РЕЙЗ')) return 'text-orange-400'
+  if (rec === 'КОЛЛ') return 'text-blue-400'
+  if (rec === 'ЧЕК/КОЛЛ') return 'text-cyan-400'
+  if (rec === 'ФОЛД') return 'text-red-400'
+  return 'text-gray-300'
 }
 
 export default function TeamStats() {
@@ -14,11 +16,12 @@ export default function TeamStats() {
   const pot = state.pot || 0
   const perPlayerRecs = state.per_player_recs || {}
 
-  const ourSeats = Object.entries(state.seats || {}).filter(
-    ([, s]) => s?.type === 'our' && !s.folded
+  // Все наши игроки (включая фолднувших)
+  const allOurSeats = Object.entries(state.seats || {}).filter(
+    ([, s]) => s?.type === 'our'
   )
 
-  if (ourSeats.length === 0) return null
+  if (allOurSeats.length === 0) return null
 
   return (
     <div className="bg-gray-800 rounded-xl p-3 min-w-[180px] flex-1">
@@ -43,32 +46,37 @@ export default function TeamStats() {
       </div>
 
       {/* Per-player equity + recommendation */}
-      {ourSeats.length > 0 && (
-        <div className="mt-2 space-y-1">
-          {ourSeats.map(([pos, seat]) => {
-            const player = seat.player || {}
-            const name = player.name || `Д${player.number}`
-            const label = state.position_labels?.[pos] || pos
-            const equity = player.equity_share
-            const rec = perPlayerRecs[pos]
+      <div className="mt-2 space-y-1">
+        {allOurSeats.map(([pos, seat]) => {
+          const player = seat.player || {}
+          const name = player.name || `Д${player.number}`
+          const label = state.position_labels?.[pos] || pos
+          const equity = player.equity_share
+          const isFolded = seat.folded
+          const rec = perPlayerRecs[pos]
 
-            return (
-              <div key={pos} className="flex items-center gap-2 text-xs">
-                <span className="text-green-400 font-semibold w-20 truncate">{name}</span>
-                <span className="text-gray-500">{label}</span>
-                {equity > 0 && (
-                  <span className="text-green-300 font-mono">{equity.toFixed(1)}%</span>
-                )}
-                {rec && (
-                  <span className={`font-bold ${REC_COLORS[rec] || 'text-gray-300'}`}>
-                    {rec}
-                  </span>
-                )}
-              </div>
-            )
-          })}
-        </div>
-      )}
+          return (
+            <div key={pos} className={`flex items-center gap-2 text-xs ${isFolded ? 'opacity-40' : ''}`}>
+              <span className="text-green-400 font-semibold w-20 truncate">{name}</span>
+              <span className="text-gray-500">{label}</span>
+              {isFolded ? (
+                <span className="text-red-400 font-mono">фолд</span>
+              ) : (
+                <>
+                  {equity > 0 && (
+                    <span className="text-green-300 font-mono">{equity.toFixed(1)}%</span>
+                  )}
+                  {rec && rec !== '—' && (
+                    <span className={`font-bold ${recColor(rec)}`}>
+                      {rec}
+                    </span>
+                  )}
+                </>
+              )}
+            </div>
+          )
+        })}
+      </div>
     </div>
   )
 }

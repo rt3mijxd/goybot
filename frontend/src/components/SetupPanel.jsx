@@ -102,17 +102,19 @@ function SeatPickerTable({ send, userId, sessionId }) {
           : 'Нажмите на место за столом чтобы занять его'}
       </p>
 
-      {/* Ссылка на сессию */}
-      <button
-        onClick={copyLink}
-        className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm transition ${
-          copied
-            ? 'bg-green-700 text-green-200'
-            : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
-        }`}
-      >
-        <span>{copied ? '✓ Скопировано!' : '📋 Скопировать ссылку на сессию'}</span>
-      </button>
+      {/* Ссылка на сессию (не в тестовом режиме) */}
+      {!state.test_mode && (
+        <button
+          onClick={copyLink}
+          className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm transition ${
+            copied
+              ? 'bg-green-700 text-green-200'
+              : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
+          }`}
+        >
+          <span>{copied ? '✓ Скопировано!' : '📋 Скопировать ссылку на сессию'}</span>
+        </button>
+      )}
 
       {/* Визуальный стол для рассадки */}
       <div className="relative w-full max-w-[460px] mx-auto" style={{ paddingTop: 'min(55%, 250px)' }}>
@@ -146,7 +148,7 @@ function SeatPickerTable({ send, userId, sessionId }) {
                     }
                   `}
                 >
-                  <span className="text-xs font-bold">{pos}</span>
+                  <span className="text-xs font-bold">{state.position_labels?.[pos] || pos}</span>
                   {claimed && <span className="text-[10px] mt-0.5 truncate max-w-[50px]">{claimed.name}</span>}
                 </div>
               </button>
@@ -158,7 +160,7 @@ function SeatPickerTable({ send, userId, sessionId }) {
       {/* Информация и кнопки */}
       <div className="text-center text-sm text-gray-400">
         {!isOperator && !myPos && <span>Нажмите на свободное место</span>}
-        {!isOperator && myPos && <span>Вы заняли место {myPos}. Нажмите ещё раз чтобы убрать.</span>}
+        {!isOperator && myPos && <span>Вы заняли место {state.position_labels?.[myPos] || myPos}. Нажмите ещё раз чтобы убрать.</span>}
       </div>
 
       {isOperator && (
