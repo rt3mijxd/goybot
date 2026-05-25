@@ -1633,21 +1633,14 @@ async def recalc(game):
 
 
 def build_recommendation(game):
-    rec_pos = None
+    """Рекомендация показывается ТОЛЬКО когда ходит наш игрок."""
     cur = game.get('current_turn')
-    if cur:
-        s = game['seats'].get(cur, {})
-        if s.get('type') == 'our' and s.get('player', {}).get('cards'):
-            rec_pos = cur
-    if not rec_pos:
-        for p in game.get('positions', []):
-            s = game['seats'].get(p, {})
-            if (s.get('type') == 'our' and not s.get('folded')
-                    and s.get('player', {}).get('cards')):
-                rec_pos = p
-                break
-    if not rec_pos:
+    if not cur:
         return None, None
+    s = game['seats'].get(cur, {})
+    if s.get('type') != 'our' or not s.get('player', {}).get('cards'):
+        return None, None
+    rec_pos = cur
 
     p = game['seats'][rec_pos]['player']
     is_pf = game['state'] == GameState.PREFLOP
