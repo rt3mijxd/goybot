@@ -8,19 +8,20 @@ import RecommendationBox from './RecommendationBox'
 import TeamStats from './TeamStats'
 import HistoryLog from './HistoryLog'
 import PlayerCardInput from './PlayerCardInput'
+import CardPicker from './CardPicker'
 import BlindsModal from './BlindsModal'
 
-export default function GameRoom({ sessionId, userId, userName, role }) {
+export default function GameRoom({ sessionId, userId, userName, role, testMode }) {
   const { state, dispatch } = useGame()
   const { send, connected } = useGameSocket(sessionId, userId, dispatch)
   const [joined, setJoined] = useState(false)
 
   useEffect(() => {
     if (connected && !joined) {
-      send({ action: 'join', name: userName, role })
+      send({ action: 'join', name: userName, role, test_mode: !!testMode })
       setJoined(true)
     }
-  }, [connected, joined, send, userName, role])
+  }, [connected, joined, send, userName, role, testMode])
 
   const gs = state.state
   const isSetup = !gs || gs === 'SETUP_RESPONSIBLE' || gs === 'SETUP_TABLE' || gs === 'SEAT_PICKING' || gs === 'SETUP_BLINDS'
@@ -67,6 +68,11 @@ export default function GameRoom({ sessionId, userId, userName, role }) {
             {/* ===== ОПЕРАТОР ===== */}
             {isOperator && (
               <>
+                {/* Тест-режим: ввод карт за игроков */}
+                {state.test_mode && gs !== 'SHOWDOWN' && (
+                  <TestCardInputs send={send} />
+                )}
+
                 {/* Статистика + рекомендация */}
                 <div className="flex gap-2 flex-wrap">
                   <TeamStats />
@@ -371,6 +377,86 @@ function PlayerActionPanel({ send, userId }) {
           ))}
         </div>
       )}
+    </div>
+  )
+}
+
+/* Тест-режим: оператор вводит карты за каждого нашего игрока */
+function TestCardInputs({ send }) {
+  const { state } = useGame()
+  const [openPos, setOpenPos] = useState(null)
+
+  const playerPositions = state.player_positions || []
+  if (playerPositions.length === 0) return null
+
+  // Собрать все занятые карты
+  const usedCards = []
+  for (const [, s] of Object.entries(state.seats || {})) {
+    if (s?.player?.cards) {
+      for (const c of s.player.cards) {
+        if (c !== '??') usedCards.push(c)
+      }
+    }
+  }
+  for (const c of (state.board || [])) usedCards.push(c)
+
+  // Проверяем, все ли уже ввели карты
+  const allHaveCards = playerPositions.every((pos) => {
+    const cards = state.seats?.[pos]?.player?.cards || []
+    return cards.length === 2 && !cards.includes('??')
+  })
+
+  if (allHaveCards) return null
+
+  return (
+    <div className="bg-gray-800 rounded-xl p-3">
+      <h3 className="text-sm font-bold mb-2">Карты игроков (тест)</h3>
+      <div className="space-y-2">
+        {playerPositions.map((pos) => {
+          const seat = state.seats?.[pos]
+          const name = seat?.player?.name || pos
+          const label = state.position_labels?.[pos] || pos
+          const cards = seat?.player?.cards || []
+          const hasCards = cards.length === 2 && !cards.includes('??')
+
+          if (hasCards) {
+            return (
+              <div key={pos} className="flex items-center gap-2 px-2 py-1 bg-green-900/30 rounded-lg">
+                <span className="text-xs text-green-400 font-semibold">{name} ({label})</span>
+                <span className="text-xs text-white font-bold">{cards.join(' ')}</span>
+              </div>
+            )
+          }
+
+          if (openPos === pos) {
+            return (
+              <div key={pos} className="bg-gray-700 rounded-lg p-2">
+                <div className="text-xs text-gray-300 mb-1 font-semibold">{name} ({label})</div>
+                <CardPicker
+                  onSelect={(picked) => {
+                    send({ action: 'set_test_cards', position: pos, cards: picked })
+                    setOpenPos(null)
+                  }}
+                  selectedCards={usedCards}
+                  maxCards={2}
+                  title={`Карты ${name}`}
+                />
+              </div>
+            )
+          }
+
+          return (
+            <button
+              key={pos}
+              onClick={() => setOpenPos(pos)}
+              className="w-full text-left flex items-center gap-2 px-3 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg transition"
+            >
+              <span className="text-xs text-gray-300 font-semibold">{name} ({label})</span>
+              <span className="text-xs text-gray-500">— выбрать карты</span>
+            </button>
+          )
+        })}
+      </div>
     </div>
   )
 }

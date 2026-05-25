@@ -6,8 +6,8 @@ import GameRoom from './components/GameRoom'
 export default function App() {
   const [session, setSession] = useState(null)
 
-  const handleJoin = useCallback((sessionId, userId, name, role) => {
-    setSession({ sessionId, userId, name, role })
+  const handleJoin = useCallback((sessionId, userId, name, role, testMode = false) => {
+    setSession({ sessionId, userId, name, role, testMode })
   }, [])
 
   if (!session) {
@@ -21,6 +21,7 @@ export default function App() {
         userId={session.userId}
         userName={session.name}
         role={session.role}
+        testMode={session.testMode}
       />
     </GameProvider>
   )

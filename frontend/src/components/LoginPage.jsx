@@ -11,7 +11,7 @@ export default function LoginPage({ onJoin }) {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
-  const createSession = async () => {
+  const createSession = async (testMode = false) => {
     if (!name.trim()) return setError('Введите имя')
     setLoading(true)
     try {
@@ -19,7 +19,7 @@ export default function LoginPage({ onJoin }) {
       const res = await fetch(`${apiBase}/api/session/new`, { method: 'POST' })
       const data = await res.json()
       const userId = generateId()
-      onJoin(data.session_id, userId, name.trim(), 'operator')
+      onJoin(data.session_id, userId, name.trim(), 'operator', testMode)
     } catch (e) {
       setError('Ошибка создания сессии')
     }
@@ -58,11 +58,18 @@ export default function LoginPage({ onJoin }) {
         </div>
 
         <button
-          onClick={createSession}
+          onClick={() => createSession(false)}
           disabled={loading}
           className="w-full bg-green-600 hover:bg-green-700 text-white font-semibold py-3 rounded-lg mb-2 transition disabled:opacity-50"
         >
           {loading ? 'Создаём...' : 'Создать сессию (оператор)'}
+        </button>
+        <button
+          onClick={() => createSession(true)}
+          disabled={loading}
+          className="w-full bg-orange-600 hover:bg-orange-700 text-white font-semibold py-2.5 rounded-lg mb-2 transition disabled:opacity-50 text-sm"
+        >
+          Тестовый режим (одно устройство)
         </button>
         <p className="text-gray-500 text-xs text-center mb-6">
           Оператор управляет столом, но не участвует в игре

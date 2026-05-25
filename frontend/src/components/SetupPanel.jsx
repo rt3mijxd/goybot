@@ -95,7 +95,9 @@ function SeatPickerTable({ send, userId, sessionId }) {
     <div className="flex-1 flex flex-col items-center justify-center p-4 gap-4">
       <h2 className="text-xl font-bold">Выберите места</h2>
       <p className="text-gray-400 text-sm">
-        {isOperator
+        {isOperator && state.test_mode
+          ? 'Нажмите на места, где сидят наши игроки. Остальные — враги.'
+          : isOperator
           ? 'Игроки выбирают места. Нажмите «Подтвердить» когда все сядут.'
           : 'Нажмите на место за столом чтобы занять его'}
       </p>
@@ -126,11 +128,11 @@ function SeatPickerTable({ send, userId, sessionId }) {
               <button
                 key={pos}
                 onClick={() => {
-                  if (!isOperator) {
+                  if (!isOperator || state.test_mode) {
                     send({ action: 'claim_seat', position: pos })
                   }
                 }}
-                disabled={isOperator}
+                disabled={isOperator && !state.test_mode}
                 className="absolute -translate-x-1/2 -translate-y-1/2 z-20"
                 style={{ left: `${coords.x}%`, top: `${coords.y}%` }}
               >
@@ -142,7 +144,6 @@ function SeatPickerTable({ send, userId, sessionId }) {
                       ? 'border-blue-400 bg-blue-700 text-white'
                       : 'border-gray-500 bg-gray-700/80 text-gray-300 hover:bg-gray-600 hover:border-gray-400'
                     }
-                    ${isOperator ? 'cursor-default' : ''}
                   `}
                 >
                   <span className="text-xs font-bold">{pos}</span>

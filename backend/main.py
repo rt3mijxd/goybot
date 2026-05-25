@@ -173,6 +173,7 @@ def serialize_game(game: dict, user_id: str) -> dict:
         'position_labels': position_labels,
         'per_player_recs': per_player_recs,
         'my_recommendation': my_recommendation,
+        'test_mode': g.get('test_mode', False),
         'street_complete': g.get('current_turn') is None and g['state'] not in (
             GameState.SETUP_RESPONSIBLE, GameState.SETUP_TABLE,
             GameState.SEAT_PICKING, GameState.SETUP_BLINDS, GameState.DEALING,
@@ -311,8 +312,8 @@ async def handle_message(session_id: str, user_id: str, msg: dict, ws: WebSocket
             return await send_error(ws, "только оператор может настраивать стол")
         await handle_set_table(session_id, game, msg)
     elif action == 'claim_seat':
-        # Игроки выбирают места (не оператор)
-        if is_responsible:
+        # Игроки выбирают места (не оператор, кроме тест-режима)
+        if is_responsible and not game.get('test_mode'):
             return await send_error(ws, "оператор не занимает место за столом")
         await handle_claim_seat(session_id, user_id, game, msg)
     elif action == 'confirm_seats':
@@ -326,6 +327,11 @@ async def handle_message(session_id: str, user_id: str, msg: dict, ws: WebSocket
     elif action == 'set_my_cards':
         # Игрок сам вводит свои карты
         await handle_set_my_cards(session_id, user_id, game, msg, ws)
+    elif action == 'set_test_cards':
+        # Тест-режим: оператор вводит карты за игрока
+        if not is_responsible or not game.get('test_mode'):
+            return await send_error(ws, "только в тестовом режиме")
+        await handle_set_test_cards(session_id, game, msg, ws)
     elif action == 'deal_cards':
         if not is_responsible:
             return await send_error(ws, "только оператор раздаёт карты")
@@ -374,11 +380,15 @@ async def handle_join(session_id: str, user_id: str, msg: dict, ws: WebSocket):
     members = game.setdefault('members', {})
     members[user_id] = name
 
+    test_mode = msg.get('test_mode', False)
+
     if role == 'operator' and not game.get('responsible_id'):
         game['responsible_id'] = user_id
         game['responsible_name'] = name
+        if test_mode:
+            game['test_mode'] = True
         game['state'] = GameState.SETUP_TABLE
-        add_history(game, f"{name} — оператор")
+        add_history(game, f"{name} — оператор" + (" (тест)" if test_mode else ""))
     elif role == 'operator' and game.get('responsible_id') == user_id:
         # Переподключение оператора
         game['responsible_name'] = name
@@ -406,16 +416,40 @@ async def handle_claim_seat(session_id: str, user_id: str, game: dict, msg: dict
         return
 
     claimed = game.setdefault('seat_claimed', {})
-    old_pos = claimed.get(user_id)
-    if old_pos == pos:
-        # Снять выбор
-        claimed.pop(user_id, None)
-    else:
-        # Снять старое место если было
+
+    if game.get('test_mode'):
+        # В тест-режиме оператор кликает на места — создаём виртуальных игроков
+        # Проверяем: если это место уже занято, снимаем
+        taken_uid = None
         for uid, p in list(claimed.items()):
             if p == pos:
-                claimed.pop(uid, None)
-        claimed[user_id] = pos
+                taken_uid = uid
+                break
+        if taken_uid:
+            claimed.pop(taken_uid, None)
+            game.get('members', {}).pop(taken_uid, None)
+        else:
+            # Создаём виртуального игрока
+            virt_id = f"test_{pos.lower()}_{secrets.token_hex(3)}"
+            test_counter = sum(1 for k in claimed if k.startswith('test_')) + 1
+            virt_name = f"Тест-{test_counter}"
+            game.setdefault('members', {})[virt_id] = virt_name
+            # Снять если другой виртуальный на этом месте
+            for uid, p in list(claimed.items()):
+                if p == pos:
+                    claimed.pop(uid, None)
+            claimed[virt_id] = pos
+    else:
+        old_pos = claimed.get(user_id)
+        if old_pos == pos:
+            # Снять выбор
+            claimed.pop(user_id, None)
+        else:
+            # Снять старое место если было
+            for uid, p in list(claimed.items()):
+                if p == pos:
+                    claimed.pop(uid, None)
+            claimed[user_id] = pos
 
     name = game.get('members', {}).get(user_id, user_id[:6])
     game.setdefault('known_players', {})[pos] = name
@@ -504,6 +538,39 @@ async def handle_set_my_cards(session_id: str, user_id: str, game: dict, msg: di
     add_history(game, f"{name} ввёл карты")
 
     # Пересчитать equity если есть карты
+    all_have_cards = all(
+        len(game['seats'].get(p, {}).get('player', {}).get('cards', [])) == 2
+        for p in game.get('player_positions', [])
+    )
+    if all_have_cards:
+        await recalc(game)
+
+    await broadcast(session_id)
+
+
+async def handle_set_test_cards(session_id: str, game: dict, msg: dict, ws: WebSocket):
+    """Тест-режим: оператор вводит карты за конкретного игрока по позиции."""
+    pos = msg.get('position', '').upper()
+    card_strs = msg.get('cards', [])
+    if len(card_strs) != 2:
+        return await send_error(ws, "нужно ровно 2 карты")
+
+    seat = game['seats'].get(pos)
+    if not seat or seat.get('type') != 'our':
+        return await send_error(ws, f"нет нашего игрока на {pos}")
+
+    parsed = []
+    for cs in card_strs:
+        c = parse_card(cs)
+        if c:
+            parsed.append(c)
+    if len(parsed) != 2:
+        return await send_error(ws, "некорректные карты")
+
+    seat['player']['cards'] = parsed
+    name = seat['player'].get('name', pos)
+    add_history(game, f"{name} ({pos}) карты введены")
+
     all_have_cards = all(
         len(game['seats'].get(p, {}).get('player', {}).get('cards', [])) == 2
         for p in game.get('player_positions', [])
@@ -720,11 +787,13 @@ async def handle_new_game(session_id: str, game: dict):
     members = dict(game.get('members', {}))
     responsible_id = game.get('responsible_id')
     responsible_name = game.get('responsible_name')
+    test_mode = game.get('test_mode', False)
 
     new = make_game()
     new['members'] = members
     new['responsible_id'] = responsible_id
     new['responsible_name'] = responsible_name
+    new['test_mode'] = test_mode
     new['state'] = GameState.SETUP_TABLE
 
     SESSIONS[session_id]['game'] = new
@@ -739,6 +808,7 @@ async def handle_reconfigure(session_id: str, game: dict):
     responsible_name = game.get('responsible_name')
     sb = game.get('sb', 0)
     bb = game.get('bb', 0)
+    test_mode = game.get('test_mode', False)
 
     new = make_game()
     new['members'] = members
@@ -746,6 +816,7 @@ async def handle_reconfigure(session_id: str, game: dict):
     new['responsible_name'] = responsible_name
     new['sb'] = sb
     new['bb'] = bb
+    new['test_mode'] = test_mode
     new['state'] = GameState.SETUP_TABLE
 
     SESSIONS[session_id]['game'] = new
