@@ -228,28 +228,39 @@ function UnifiedActionPanel({ send }) {
               {name} ({state.position_labels?.[pos] || pos})
             </span>
             <div className={`flex gap-1 flex-wrap ${!isCurrentTurn ? 'pointer-events-none' : ''}`}>
-              <button onClick={() => act(pos, 'fold')}
-                disabled={!isCurrentTurn}
-                className="bg-red-800 hover:bg-red-700 disabled:opacity-30 text-white text-xs px-2 py-1 rounded transition">
-                Фолд
-              </button>
-              <button onClick={() => act(pos, 'check')}
-                disabled={!isCurrentTurn}
-                className="bg-gray-600 hover:bg-gray-500 disabled:opacity-30 text-white text-xs px-2 py-1 rounded transition">
-                Чек
-              </button>
-              <button onClick={() => act(pos, 'call')}
-                disabled={!isCurrentTurn}
-                className="bg-blue-700 hover:bg-blue-600 disabled:opacity-30 text-white text-xs px-2 py-1 rounded transition">
-                Колл
-              </button>
-              {!isOur && (
-                <button onClick={() => act(pos, 'limp')}
-                  disabled={!isCurrentTurn}
-                  className="bg-gray-600 hover:bg-gray-500 disabled:opacity-30 text-white text-xs px-2 py-1 rounded transition">
-                  Лимп
-                </button>
-              )}
+              {(() => {
+                const callAmt = isCurrentTurn ? (state.call_amount || 0) : 0
+                const canCheck = callAmt === 0
+                return (
+                  <>
+                    <button onClick={() => act(pos, 'fold')}
+                      disabled={!isCurrentTurn}
+                      className="bg-red-800 hover:bg-red-700 disabled:opacity-30 text-white text-xs px-2 py-1 rounded transition">
+                      Фолд
+                    </button>
+                    {canCheck ? (
+                      <button onClick={() => act(pos, 'check')}
+                        disabled={!isCurrentTurn}
+                        className="bg-gray-600 hover:bg-gray-500 disabled:opacity-30 text-white text-xs px-2 py-1 rounded transition">
+                        Чек
+                      </button>
+                    ) : (
+                      <button onClick={() => act(pos, 'call')}
+                        disabled={!isCurrentTurn}
+                        className="bg-blue-700 hover:bg-blue-600 disabled:opacity-30 text-white text-xs px-2 py-1 rounded transition">
+                        Колл {callAmt > 0 ? callAmt : ''}
+                      </button>
+                    )}
+                    {!isOur && canCheck && (
+                      <button onClick={() => act(pos, 'limp')}
+                        disabled={!isCurrentTurn}
+                        className="bg-gray-600 hover:bg-gray-500 disabled:opacity-30 text-white text-xs px-2 py-1 rounded transition">
+                        Лимп
+                      </button>
+                    )}
+                  </>
+                )
+              })()}
               <div className="flex gap-0.5 items-center">
                 <input
                   type="number"
@@ -338,18 +349,29 @@ function PlayerActionPanel({ send, userId }) {
         Ваш ход ({label})
       </div>
       <div className="flex gap-1.5 flex-wrap justify-center">
-        <button onClick={() => act('fold')}
-          className="bg-red-800 hover:bg-red-700 text-white text-sm px-3 py-2 rounded-lg transition font-semibold">
-          Фолд
-        </button>
-        <button onClick={() => act('check')}
-          className="bg-gray-600 hover:bg-gray-500 text-white text-sm px-3 py-2 rounded-lg transition font-semibold">
-          Чек
-        </button>
-        <button onClick={() => act('call')}
-          className="bg-blue-700 hover:bg-blue-600 text-white text-sm px-3 py-2 rounded-lg transition font-semibold">
-          Колл
-        </button>
+        {(() => {
+          const callAmt = state.call_amount || 0
+          const canCheck = callAmt === 0
+          return (
+            <>
+              <button onClick={() => act('fold')}
+                className="bg-red-800 hover:bg-red-700 text-white text-sm px-3 py-2 rounded-lg transition font-semibold">
+                Фолд
+              </button>
+              {canCheck ? (
+                <button onClick={() => act('check')}
+                  className="bg-gray-600 hover:bg-gray-500 text-white text-sm px-3 py-2 rounded-lg transition font-semibold">
+                  Чек
+                </button>
+              ) : (
+                <button onClick={() => act('call')}
+                  className="bg-blue-700 hover:bg-blue-600 text-white text-sm px-3 py-2 rounded-lg transition font-semibold">
+                  Колл {callAmt}
+                </button>
+              )}
+            </>
+          )
+        })()}
         <div className="flex gap-1 items-center">
           <input
             type="number"

@@ -173,6 +173,7 @@ def serialize_game(game: dict, user_id: str) -> dict:
         'position_labels': position_labels,
         'per_player_recs': per_player_recs,
         'my_recommendation': my_recommendation,
+        'call_amount': to_call(g, g.get('current_turn', '')) if g.get('current_turn') else 0,
         'test_mode': g.get('test_mode', False),
         'street_complete': g.get('current_turn') is None and g['state'] not in (
             GameState.SETUP_RESPONSIBLE, GameState.SETUP_TABLE,

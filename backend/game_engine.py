@@ -1351,15 +1351,40 @@ def make_game():
 
 
 def get_preflop_order(game):
-    n = game.get('table_size', 6)
-    order = PREFLOP_ORDERS.get(n, PREFLOP_ORDERS[6])
-    return [p for p in order if p in game['positions']]
+    """Preflop: первый ходит игрок после BB (UTG), последний BB.
+    Для 2 игроков: BU/SB ходит первым, BB вторым.
+    """
+    positions = game.get('positions', [])
+    n = len(positions)
+    if n < 2:
+        return positions[:]
+    dealer_idx = game.get('dealer_idx', 0) % n
+
+    if n == 2:
+        # Хедз-ап: BU/SB (dealer) ходит первым на префлопе
+        return [positions[dealer_idx], positions[(dealer_idx + 1) % n]]
+    else:
+        # Первый после BB = dealer_idx + 3
+        # Порядок: UTG → MP → CO → BU → SB → BB
+        return [positions[(dealer_idx + i) % n] for i in range(3, 3 + n)]
 
 
 def get_postflop_order(game):
-    n = game.get('table_size', 6)
-    order = POSTFLOP_ORDERS.get(n, POSTFLOP_ORDERS[6])
-    return [p for p in order if p in game['positions']]
+    """Postflop: первый ходит SB (или первый активный после дилера), последний BU.
+    Для 2 игроков: BB ходит первым, BU/SB вторым.
+    """
+    positions = game.get('positions', [])
+    n = len(positions)
+    if n < 2:
+        return positions[:]
+    dealer_idx = game.get('dealer_idx', 0) % n
+
+    if n == 2:
+        # Хедз-ап: BB ходит первым на постфлопе
+        return [positions[(dealer_idx + 1) % n], positions[dealer_idx]]
+    else:
+        # SB = dealer_idx + 1, BB = +2, UTG = +3, ..., BU = dealer_idx
+        return [positions[(dealer_idx + i) % n] for i in range(1, 1 + n)]
 
 
 def active_positions(game):
@@ -1374,8 +1399,18 @@ def _ordered_active(game, order):
 
 
 def is_bb_option(game, pos):
+    """BB может чекнуть если никто не рейзнул (last_bet == bb)."""
+    positions = game.get('positions', [])
+    n = len(positions)
+    if n < 2:
+        return False
+    dealer_idx = game.get('dealer_idx', 0) % n
+    if n == 2:
+        bb_pos = positions[(dealer_idx + 1) % n]
+    else:
+        bb_pos = positions[(dealer_idx + 2) % n]
     return (game.get('state') == GameState.PREFLOP
-            and pos == 'BB'
+            and pos == bb_pos
             and game.get('last_bet', 0) <= game.get('bb', 0))
 
 
@@ -1383,7 +1418,8 @@ def next_to_act(game):
     is_preflop = (game['state'] == GameState.PREFLOP)
     order  = get_preflop_order(game) if is_preflop else get_postflop_order(game)
     active = _ordered_active(game, order)
-    if not active: return None
+    if not active:
+        return None
     active_set = set(active)
     acted  = game.get('acted_this_street', set())
     cur    = game.get('current_turn')
@@ -1401,32 +1437,43 @@ def next_to_act(game):
 
 
 def start_preflop(game):
-    bb = game.get('bb', 0)
-    sb = game.get('sb', 0)
+    bb_val = game.get('bb', 0)
+    sb_val = game.get('sb', 0)
     positions = game.get('positions', [])
+    n = len(positions)
     if not game.get('street_contrib'):
         game['street_contrib'] = {}
     if not game.get('street_bet_to'):
-        game['street_bet_to'] = bb
+        game['street_bet_to'] = bb_val
     if not game.get('last_bet'):
-        game['last_bet'] = bb
-    sb_pos = next((p for p in positions if p == 'SB'), None)
-    bb_pos = next((p for p in positions if p == 'BB'), None)
-    if not sb_pos and len(positions) >= 2:
-        sb_pos = positions[-2]
-    if not bb_pos and len(positions) >= 1:
-        bb_pos = positions[-1]
+        game['last_bet'] = bb_val
+
+    # Определяем SB/BB по dealer_idx
+    dealer_idx = game.get('dealer_idx', 0) % max(n, 1)
+    if n == 2:
+        sb_pos = positions[dealer_idx]          # В хедз-апе дилер = SB
+        bb_pos = positions[(dealer_idx + 1) % n]
+    elif n >= 3:
+        sb_pos = positions[(dealer_idx + 1) % n]
+        bb_pos = positions[(dealer_idx + 2) % n]
+    else:
+        sb_pos = None
+        bb_pos = None
+
     if sb_pos and sb_pos not in game['street_contrib']:
-        game['street_contrib'][sb_pos] = sb
+        game['street_contrib'][sb_pos] = sb_val
     if bb_pos and bb_pos not in game['street_contrib']:
-        game['street_contrib'][bb_pos] = bb
+        game['street_contrib'][bb_pos] = bb_val
+
     already_acted = set()
     for pos, act in game.get('opp_actions', {}).items():
-        if act: already_acted.add(pos)
+        if act:
+            already_acted.add(pos)
     game['acted_this_street'] = already_acted
-    order  = get_preflop_order(game)
+    order = get_preflop_order(game)
     active = [p for p in order
               if p not in already_acted
+              and game['seats'].get(p, {}).get('type') in ('our', 'opponent')
               and not game['seats'].get(p, {}).get('folded', False)]
     game['current_turn'] = active[0] if active else None
 
