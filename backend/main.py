@@ -225,9 +225,28 @@ async def ping_loop(ws: WebSocket, session_id: str, user_id: str):
         pass
 
 
+SESSION_TTL = 2 * 60 * 60  # 2 часа
+
+
+async def cleanup_loop():
+    """Фоновая задача: удаляет сессии без активности > 2 часов."""
+    while True:
+        await asyncio.sleep(300)  # проверяем каждые 5 минут
+        now = time.time()
+        expired = [
+            sid for sid, sess in SESSIONS.items()
+            if now - sess.get('last_activity', sess.get('created', 0)) > SESSION_TTL
+        ]
+        for sid in expired:
+            SESSIONS.pop(sid, None)
+            CONNECTIONS.pop(sid, None)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    task = asyncio.create_task(cleanup_loop())
     yield
+    task.cancel()
     SESSIONS.clear()
     CONNECTIONS.clear()
 
@@ -305,6 +324,7 @@ async def ws_endpoint(websocket: WebSocket, session_id: str, user_id: str):
 
 async def handle_message(session_id: str, user_id: str, msg: dict, ws: WebSocket):
     action = msg.get('action')
+    SESSIONS[session_id]['last_activity'] = time.time()
     game = SESSIONS[session_id]['game']
     is_responsible = (user_id == game.get('responsible_id'))
 
