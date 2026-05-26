@@ -1695,13 +1695,14 @@ def _get_poker_label(game, phys_pos):
 
 
 def build_recommendation(game):
-    """Рекомендация показывается ТОЛЬКО когда ходит наш игрок."""
+    """Рекомендация показывается ТОЛЬКО когда ходит наш игрок.
+    Возвращает (текст, покерный_ярлык, физическая_позиция)."""
     cur = game.get('current_turn')
     if not cur:
-        return None, None
+        return None, None, None
     s = game['seats'].get(cur, {})
     if s.get('type') != 'our' or not s.get('player', {}).get('cards'):
-        return None, None
+        return None, None, None
     rec_pos = cur
     # Покерный ярлык для GTO-функций (учитывает ротацию дилера)
     poker_label = _get_poker_label(game, rec_pos)
@@ -1746,4 +1747,4 @@ def build_recommendation(game):
                 p.get('equity_share', 0), game.get('pot', 0), rec_call,
                 board_b, our_pos=poker_label,
                 aggressor=pf_agg_label, n_opp=n_opp)
-    return rec, poker_label
+    return rec, poker_label, rec_pos

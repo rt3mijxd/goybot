@@ -68,9 +68,9 @@ def serialize_game(game: dict, user_id: str) -> dict:
 
     board_cards = [card_to_short(c) for c in g.get('board', [])]
 
-    rec_text, rec_pos = None, None
+    rec_text, rec_label, rec_phys = None, None, None
     try:
-        rec_text, rec_pos = build_recommendation(g)
+        rec_text, rec_label, rec_phys = build_recommendation(g)
     except Exception:
         pass
 
@@ -79,7 +79,7 @@ def serialize_game(game: dict, user_id: str) -> dict:
     for pos in g.get('player_positions', []):
         seat = g['seats'].get(pos, {})
         if seat.get('player', {}).get('user_id') == user_id:
-            if rec_pos == pos:
+            if rec_phys == pos:
                 my_recommendation = rec_text
             break
 
@@ -137,16 +137,35 @@ def serialize_game(game: dict, user_id: str) -> dict:
         if not cards or len(cards) < 2:
             per_player_recs[pos] = '—'
             continue
-        # Простая краткая рекомендация на основе equity
-        if eq >= 60:
-            raise_amt = int(round(pot * 0.75)) if pot > 0 else 0
-            per_player_recs[pos] = f'РЕЙЗ {raise_amt}' if raise_amt else 'РЕЙЗ'
-        elif eq >= 40:
-            per_player_recs[pos] = 'КОЛЛ'
-        elif eq >= 25:
-            per_player_recs[pos] = 'ЧЕК/КОЛЛ'
+
+        # Если это текущий ход этого игрока и есть GTO-рекомендация — берём из неё
+        if pos == rec_phys and rec_text:
+            # Извлекаем краткое действие из GTO-текста
+            rt = rec_text.upper()
+            if 'ФОЛД' in rt:
+                per_player_recs[pos] = 'ФОЛД'
+            elif 'РЕЙЗ' in rt or 'БЕТ' in rt or 'ОТКРЫТ' in rt or '3-БЕТ' in rt:
+                # Ищем размер рейза в тексте
+                raise_amt = int(round(pot * 0.75)) if pot > 0 else 0
+                per_player_recs[pos] = f'РЕЙЗ {raise_amt}' if raise_amt else 'РЕЙЗ'
+            elif 'КОЛЛ' in rt:
+                call_amt = to_call(g, pos)
+                per_player_recs[pos] = f'КОЛЛ {call_amt}' if call_amt > 0 else 'КОЛЛ'
+            elif 'ЧЕК' in rt:
+                per_player_recs[pos] = 'ЧЕК'
+            else:
+                per_player_recs[pos] = 'КОЛЛ'
         else:
-            per_player_recs[pos] = 'ФОЛД'
+            # Эвристика для не-текущих игроков
+            if eq >= 60:
+                raise_amt = int(round(pot * 0.75)) if pot > 0 else 0
+                per_player_recs[pos] = f'РЕЙЗ {raise_amt}' if raise_amt else 'РЕЙЗ'
+            elif eq >= 40:
+                per_player_recs[pos] = 'КОЛЛ'
+            elif eq >= 25:
+                per_player_recs[pos] = 'ЧЕК/КОЛЛ'
+            else:
+                per_player_recs[pos] = 'ФОЛД'
 
     return {
         'state': g['state'].name,
@@ -163,7 +182,7 @@ def serialize_game(game: dict, user_id: str) -> dict:
         'team_win_pct': round(g.get('team_win_pct', 0), 4),
         'history': g.get('history', [])[-15:],
         'recommendation': rec_text,
-        'recommendation_pos': rec_pos,
+        'recommendation_pos': rec_label,
         'opp_actions': opp_actions_out,
         'is_responsible': is_responsible,
         'responsible_name': g.get('responsible_name', ''),
