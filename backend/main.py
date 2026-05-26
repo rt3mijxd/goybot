@@ -4,6 +4,7 @@ FastAPI WebSocket server for the poker assistant.
 
 import asyncio
 import json
+import re
 import secrets
 import time
 from contextlib import asynccontextmanager
@@ -125,47 +126,38 @@ def serialize_game(game: dict, user_id: str) -> dict:
             bb_pos = positions[(dealer_idx + 2) % n]
 
     # Краткая рекомендация для каждого нашего игрока
-    pot = g.get('pot', 0)
+    # Показывается ТОЛЬКО когда это ход игрока. Иначе — пусто.
     per_player_recs = {}
     for pos in g.get('player_positions', []):
         seat = g['seats'].get(pos, {})
         if seat.get('folded'):
-            per_player_recs[pos] = 'ФОЛД'
-            continue
+            continue  # фолднувшие — без рекомендации (статус видно по opacity)
         cards = seat.get('player', {}).get('cards', [])
-        eq = seat.get('player', {}).get('equity_share', 0)
         if not cards or len(cards) < 2:
-            per_player_recs[pos] = '—'
             continue
 
-        # Если это текущий ход этого игрока и есть GTO-рекомендация — берём из неё
-        if pos == rec_phys and rec_text:
-            # Извлекаем краткое действие из GTO-текста
-            rt = rec_text.upper()
-            if 'ФОЛД' in rt:
-                per_player_recs[pos] = 'ФОЛД'
-            elif 'РЕЙЗ' in rt or 'БЕТ' in rt or 'ОТКРЫТ' in rt or '3-БЕТ' in rt:
-                # Ищем размер рейза в тексте
-                raise_amt = int(round(pot * 0.75)) if pot > 0 else 0
-                per_player_recs[pos] = f'РЕЙЗ {raise_amt}' if raise_amt else 'РЕЙЗ'
-            elif 'КОЛЛ' in rt:
-                call_amt = to_call(g, pos)
-                per_player_recs[pos] = f'КОЛЛ {call_amt}' if call_amt > 0 else 'КОЛЛ'
-            elif 'ЧЕК' in rt:
-                per_player_recs[pos] = 'ЧЕК'
+        # Рекомендация только когда это ход этого игрока
+        if pos != rec_phys or not rec_text:
+            continue
+
+        # Извлекаем краткое действие из GTO-текста
+        rt = rec_text.upper()
+        if 'ФОЛД' in rt:
+            per_player_recs[pos] = 'ФОЛД'
+        elif any(w in rt for w in ('РЕЙЗ', 'БЕТ', '3БЕТ', '4БЕТ', 'ОТКРЫТ')):
+            # Извлекаем сумму из GTO-текста ("до ~150", "до ~300")
+            m = re.search(r'~(\d+)', rec_text)
+            if m:
+                per_player_recs[pos] = f'РЕЙЗ {m.group(1)}'
             else:
-                per_player_recs[pos] = 'КОЛЛ'
+                per_player_recs[pos] = 'РЕЙЗ'
+        elif 'КОЛЛ' in rt:
+            call_amt = to_call(g, pos)
+            per_player_recs[pos] = f'КОЛЛ {call_amt}' if call_amt > 0 else 'КОЛЛ'
+        elif 'ЧЕК' in rt:
+            per_player_recs[pos] = 'ЧЕК'
         else:
-            # Эвристика для не-текущих игроков
-            if eq >= 60:
-                raise_amt = int(round(pot * 0.75)) if pot > 0 else 0
-                per_player_recs[pos] = f'РЕЙЗ {raise_amt}' if raise_amt else 'РЕЙЗ'
-            elif eq >= 40:
-                per_player_recs[pos] = 'КОЛЛ'
-            elif eq >= 25:
-                per_player_recs[pos] = 'ЧЕК/КОЛЛ'
-            else:
-                per_player_recs[pos] = 'ФОЛД'
+            per_player_recs[pos] = '—'
 
     return {
         'state': g['state'].name,
