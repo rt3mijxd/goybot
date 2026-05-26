@@ -5,22 +5,22 @@ import Card from './Card'
 import PotDisplay from './PotDisplay'
 
 const SEAT_POSITIONS_6 = {
-  UTG: { x: 15, y: 78 },
+  UTG: { x: 15, y: 75 },
   MP:  { x: 15, y: 22 },
   CO:  { x: 50, y: 8 },
   BU:  { x: 85, y: 22 },
-  SB:  { x: 85, y: 78 },
-  BB:  { x: 50, y: 92 },
+  SB:  { x: 85, y: 75 },
+  BB:  { x: 50, y: 88 },
 }
 
 /* Смещения для фишек — рядом с кружком игрока, ближе к центру стола */
 const CHIP_OFFSETS = {
-  UTG: { dx: 8, dy: -6 },
+  UTG: { dx: 8, dy: -8 },
   MP:  { dx: 8, dy: 6 },
   CO:  { dx: 0, dy: 8 },
   BU:  { dx: -8, dy: 6 },
-  SB:  { dx: -8, dy: -6 },
-  BB:  { dx: 0, dy: -8 },
+  SB:  { dx: -8, dy: -8 },
+  BB:  { dx: 0, dy: -10 },
 }
 
 function DealerChip({ pos }) {
@@ -58,7 +58,7 @@ export default function PokerTable() {
   const gs = state.state
 
   return (
-    <div className="relative w-full mt-8" style={{ paddingTop: 'min(58%, 320px)' }}>
+    <div className="relative w-full mt-8 mb-4" style={{ paddingTop: 'min(62%, 350px)' }}>
       <div className="absolute inset-0">
         {/* Table felt */}
         <div className="absolute inset-[10%] rounded-[50%] bg-felt shadow-[inset_0_4px_30px_rgba(0,0,0,0.5)] border-4 border-felt-dark" />

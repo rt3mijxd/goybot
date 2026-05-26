@@ -1667,16 +1667,31 @@ async def recalc(game):
                        if s.get('type') == 'opponent' and not s.get('folded', False))
     for i, (pos, s) in enumerate(our_entries):
         wp = result['individual'][i]
+        poker_label = _get_poker_label(game, pos)
         seat_call = 0 if is_bb_option(game, pos) else to_call(game, pos)
-        if is_pf and seat_call <= bb and hand_in_range(s['player'].get('cards',[]), pos, ''):
+        if is_pf and seat_call <= bb and hand_in_range(s['player'].get('cards',[]), poker_label, ''):
             raise_to = max(bb * 3, 150)
             ev = calc_ev_raise(wp, pot, raise_to, n_opp_active)
         else:
-            ev = calc_ev(wp, pot, seat_call, pos)
+            ev = calc_ev(wp, pot, seat_call, poker_label)
         prev = s['player'].get('equity_share', 0.0)
         s['player']['equity_share'] = wp
         s['player']['equity_delta'] = wp - prev
         s['player']['ev'] = ev
+
+
+def _get_poker_label(game, phys_pos):
+    """Получить покерный ярлык (UTG/CO/BU/SB/BB) для физической позиции."""
+    positions = game.get('positions', [])
+    n = len(positions)
+    if n < 2 or phys_pos not in positions:
+        return phys_pos
+    dealer_idx = game.get('dealer_idx', 0) % n
+    labels = list(TABLE_POSITIONS.get(n, TABLE_POSITIONS[6]))
+    bu_idx_in_labels = labels.index('BU') if 'BU' in labels else 0
+    i = positions.index(phys_pos)
+    label_i = (i - dealer_idx + bu_idx_in_labels) % n
+    return labels[label_i]
 
 
 def build_recommendation(game):
@@ -1688,6 +1703,14 @@ def build_recommendation(game):
     if s.get('type') != 'our' or not s.get('player', {}).get('cards'):
         return None, None
     rec_pos = cur
+    # Покерный ярлык для GTO-функций (учитывает ротацию дилера)
+    poker_label = _get_poker_label(game, rec_pos)
+
+    # Ярлык агрессора тоже переводим
+    pf_agg = game.get('preflop_aggressor', '')
+    pf_agg_label = _get_poker_label(game, pf_agg) if pf_agg else ''
+    flop_agg = game.get('flop_aggressor', '')
+    flop_agg_label = _get_poker_label(game, flop_agg) if flop_agg else ''
 
     p = game['seats'][rec_pos]['player']
     is_pf = game['state'] == GameState.PREFLOP
@@ -1699,28 +1722,28 @@ def build_recommendation(game):
         rec = recommend_action(
             p.get('equity_share', 0), p.get('ev', 0),
             game.get('pot', 0), rec_call,
-            pos=rec_pos, cards=p.get('cards', []),
+            pos=poker_label, cards=p.get('cards', []),
             is_preflop=True, bb=game.get('bb', 0), n_opp=n_opp,
-            opener_pos=game.get('preflop_aggressor', ''))
+            opener_pos=pf_agg_label)
     else:
         rec_call = to_call(game, rec_pos)
         board_b = game.get('board', [])
         if len(board_b) >= 5 and p.get('cards'):
             rec = river_recommend(
                 p.get('equity_share', 0), game.get('pot', 0), rec_call,
-                board_b, p.get('cards', []), our_pos=rec_pos,
-                flop_aggressor=game.get('flop_aggressor'),
+                board_b, p.get('cards', []), our_pos=poker_label,
+                flop_aggressor=flop_agg_label,
                 turn_bet_size=game.get('turn_bet_size', 0),
                 agg_history=game.get('agg_history', ''), n_opp=n_opp)
         elif len(board_b) >= 4 and p.get('cards'):
             rec = turn_recommend(
                 p.get('equity_share', 0), game.get('pot', 0), rec_call,
-                board_b, p.get('cards', []), our_pos=rec_pos,
-                flop_aggressor=game.get('flop_aggressor'),
+                board_b, p.get('cards', []), our_pos=poker_label,
+                flop_aggressor=flop_agg_label,
                 flop_bet_size=game.get('flop_bet_size', 0.5), n_opp=n_opp)
         else:
             rec = postflop_recommend(
                 p.get('equity_share', 0), game.get('pot', 0), rec_call,
-                board_b, our_pos=rec_pos,
-                aggressor=game.get('preflop_aggressor'), n_opp=n_opp)
-    return rec, rec_pos
+                board_b, our_pos=poker_label,
+                aggressor=pf_agg_label, n_opp=n_opp)
+    return rec, poker_label
