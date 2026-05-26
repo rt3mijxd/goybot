@@ -10,8 +10,8 @@ export default function HistoryLog() {
   return (
     <div className="lg:w-64 bg-gray-800 rounded-xl p-3 max-h-[400px] overflow-y-auto">
       <div className="text-xs font-semibold text-gray-400 mb-2">История</div>
-      {history.map((entry, i) => (
-        <div key={i} className="text-xs text-gray-300 py-0.5 border-b border-gray-700/50">
+      {[...history].reverse().map((entry, i) => (
+        <div key={i} className={`text-xs text-gray-300 py-0.5 border-b border-gray-700/50 ${i === 0 ? 'text-white font-semibold' : ''}`}>
           {entry}
         </div>
       ))}
