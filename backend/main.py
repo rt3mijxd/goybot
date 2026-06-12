@@ -387,6 +387,10 @@ async def handle_message(session_id: str, user_id: str, msg: dict, ws: WebSocket
         if not is_responsible:
             return await send_error(ws, "только оператор выкладывает борд")
         await handle_board(session_id, game, msg)
+    elif action == 'board_replace':
+        if not is_responsible:
+            return await send_error(ws, "только оператор выкладывает борд")
+        await handle_board_replace(session_id, game, msg)
     elif action == 'next_round':
         if not is_responsible:
             return await send_error(ws, "только оператор начинает раунд")
@@ -809,6 +813,22 @@ async def handle_board(session_id: str, game: dict, msg: dict):
         start_street(game)
         add_history(game, f"Ривер: {card_to_short(parsed[0])}")
 
+    await recalc(game)
+    await broadcast(session_id)
+
+
+async def handle_board_replace(session_id: str, game: dict, msg: dict):
+    """Заменяет существующие карты борда без смены состояния игры."""
+    if game.get('current_turn') is not None:
+        return
+    card_strs: list = msg.get('cards', [])
+    parsed = [c for c in (parse_card(cs) for cs in card_strs) if c]
+    if not parsed:
+        return
+    n = len(parsed)
+    if n > len(game.get('board', [])):
+        return
+    game['board'][:n] = parsed
     await recalc(game)
     await broadcast(session_id)
 
