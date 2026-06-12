@@ -14,20 +14,19 @@ export default function CardPicker({ onSelect, selectedCards = [], maxCards = 2,
 
   const toggle = (card) => {
     if (selectedCards.includes(card)) return
-    setPicked((prev) => {
-      if (prev.includes(card)) {
-        return prev.filter((c) => c !== card)
-      }
-      if (prev.length >= maxCards) return prev
-      const next = [...prev, card]
-      if (autoConfirm && next.length === maxCards) {
-        setTimeout(() => {
-          onSelect(next)
-          setPicked([])
-        }, 150)
-      }
-      return next
-    })
+    if (picked.includes(card)) {
+      setPicked((prev) => prev.filter((c) => c !== card))
+      return
+    }
+    if (picked.length >= maxCards) return
+    const next = [...picked, card]
+    setPicked(next)
+    if (autoConfirm && next.length === maxCards) {
+      setTimeout(() => {
+        onSelect(next)
+        setPicked([])
+      }, 150)
+    }
   }
 
   const confirm = () => {

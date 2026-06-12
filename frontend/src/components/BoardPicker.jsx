@@ -9,19 +9,17 @@ export default function BoardPicker({ send }) {
   const gs = state.state
   const board = state.board || []
 
-  const allUsedCards = []
+  // Карты игроков — всегда заблокированы в пикере
+  const playerCards = []
   for (const seat of Object.values(state.seats || {})) {
     if (seat?.player?.cards) {
       for (const c of seat.player.cards) {
-        if (c !== '??') allUsedCards.push(c)
+        if (c !== '??') playerCards.push(c)
       }
     }
   }
-  // При редактировании не блокируем уже выложенные карты борда
-  const usedForPicker = editing
-    ? allUsedCards
-    : [...allUsedCards, ...board]
 
+  // Сколько карт нужно выбрать для текущей улицы
   let maxCards = 3
   let title = 'Флоп (3 карты)'
   if (gs === 'PREFLOP' || gs === 'DEALING') {
@@ -34,7 +32,8 @@ export default function BoardPicker({ send }) {
     return null
   }
 
-  // Показываем текущий борд + кнопку редактирования
+  // Если уже есть карты на борде и не режим редактирования —
+  // показываем борд + кнопку редактирования
   if (board.length > 0 && !editing) {
     return (
       <div className="bg-gray-800 rounded-xl p-3 flex items-center gap-3 flex-wrap">
@@ -46,12 +45,14 @@ export default function BoardPicker({ send }) {
           onClick={() => setEditing(true)}
           className="ml-auto text-xs bg-gray-700 hover:bg-gray-600 text-gray-300 px-3 py-1.5 rounded-lg transition"
         >
-          Редактировать борд
+          ✎ Изменить борд
         </button>
       </div>
     )
   }
 
+  // Режим редактирования: разрешаем выбрать заново весь борд текущей улицы
+  // При редактировании карты борда НЕ блокируются (можно переиспользовать)
   const handleSelect = (cards) => {
     send({ action: 'board', cards })
     setEditing(false)
@@ -60,19 +61,19 @@ export default function BoardPicker({ send }) {
   return (
     <div className="flex-1 min-w-[300px]">
       {editing && (
-        <div className="flex items-center gap-2 mb-2">
-          <span className="text-xs text-gray-400">Редактирование борда</span>
+        <div className="flex items-center gap-2 mb-1">
+          <span className="text-xs text-yellow-400 font-semibold">Замена борда</span>
           <button
             onClick={() => setEditing(false)}
-            className="text-xs text-gray-500 hover:text-gray-300 transition"
+            className="text-xs text-gray-500 hover:text-gray-300 ml-auto transition"
           >
-            ✕ Отмена
+            Отмена
           </button>
         </div>
       )}
       <CardPicker
         onSelect={handleSelect}
-        selectedCards={usedForPicker}
+        selectedCards={playerCards}
         maxCards={maxCards}
         title={title}
         autoConfirm={true}
