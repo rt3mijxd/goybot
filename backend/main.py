@@ -48,10 +48,13 @@ def serialize_game(game: dict, user_id: str) -> dict:
         s = {'type': raw.get('type', 'empty'), 'folded': raw.get('folded', False)}
         if raw.get('type') == 'our':
             p = raw.get('player', {})
-            cards_visible = (
-                is_responsible
-                or p.get('user_id') == user_id
+            # Оператор видит все карты; наши игроки видят карты друг друга
+            is_our_player = any(
+                s.get('player', {}).get('user_id') == user_id
+                for s in g['seats'].values()
+                if s.get('type') == 'our'
             )
+            cards_visible = is_responsible or is_our_player
             s['player'] = {
                 'number': p.get('number'),
                 'name': p.get('name', ''),
