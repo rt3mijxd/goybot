@@ -561,11 +561,50 @@ def hand_in_range(cards, pos, action):
     return any(frozenset(c) == hand_fs for c in combos)
 
 
-def classify_hand_preflop(cards, pos, bb, last_bet, opener_pos=''):
+def classify_hand_preflop(cards, pos, bb, last_bet, opener_pos='', bet_level=1):
+    """
+    bet_level: 1 = открытый рейз (первая ставка), 2 = 3-бет, 3 = 4-бет+
+    """
     if last_bet == 0 or last_bet == bb:
+        # Никто не рейзил — опен или ББ-опция
         if hand_in_range(cards, pos, ''):
             return 'raise'
         return 'fold'
+
+    if bet_level >= 3:
+        # Против 4-бета: только монстры идут олл-ин, остальные фолдят
+        # Монстры: TT+, AK
+        if cards and len(cards) == 2:
+            r1, r2 = sorted([cards[0][0], cards[1][0]], reverse=True)
+            suited = cards[0][1] == cards[1][1]
+            is_pair = r1 == r2
+            is_ak = (r1 == 14 and r2 == 13)
+            if is_pair and r1 >= 10:  # TT+
+                return '4bet'
+            if is_ak:
+                return '4bet'
+        return 'fold'
+
+    if bet_level == 2:
+        # Против 3-бета: очень узкий диапазон для 4-бета, остальное фолд/колл
+        if cards and len(cards) == 2:
+            r1, r2 = sorted([cards[0][0], cards[1][0]], reverse=True)
+            suited = cards[0][1] == cards[1][1]
+            is_pair = r1 == r2
+            is_ak = (r1 == 14 and r2 == 13)
+            # 4-бет: QQ+, AK
+            if is_pair and r1 >= 12:
+                return '4bet'
+            if is_ak:
+                return '4bet'
+            # Колл: JJ, TT, AQs
+            if is_pair and r1 >= 10:
+                return 'call'
+            if r1 == 14 and r2 == 12 and suited:
+                return 'call'
+        return 'fold'
+
+    # bet_level == 1: против первого рейза (3-бет ситуация)
     if opener_pos:
         specs_3bet = get_3bet_specs(opener_pos, pos, '3bet')
         if specs_3bet and _hand_in_specs(cards, specs_3bet):
@@ -1265,7 +1304,7 @@ def postflop_recommend(wp, pot, call_amt, board, our_pos, aggressor, n_opp):
         return f"ЧЕК — слабая рука ({wp:.0f}%), {tex_lbl}, не вкладываем"
 
 
-def recommend_action(wp, ev, pot, call_amt, pos='', cards=None, is_preflop=False, bb=0, n_opp=0, opener_pos=''):
+def recommend_action(wp, ev, pot, call_amt, pos='', cards=None, is_preflop=False, bb=0, n_opp=0, opener_pos='', bet_level=1):
     if pot == 0: pot = 1
     def opp_txt():
         n = n_opp
@@ -1275,25 +1314,28 @@ def recommend_action(wp, ev, pot, call_amt, pos='', cards=None, is_preflop=False
         return f"{n} оппонентов"
 
     if is_preflop and cards and pos:
-        decision = classify_hand_preflop(cards, pos, bb or 1, call_amt, opener_pos=opener_pos)
+        decision = classify_hand_preflop(cards, pos, bb or 1, call_amt, opener_pos=opener_pos, bet_level=bet_level)
         if decision == 'raise':
             raise_to = max(call_amt * 3, bb * 3) if call_amt > 0 else bb * 3
             ev_raise = calc_ev_raise(wp, pot, raise_to, n_opp)
             ev_txt = f"EV+{ev_raise:.0f}" if ev_raise >= 0 else f"EV{ev_raise:.0f}"
             return f"РЕЙЗ до ~{raise_to} — рука в диапазоне открытия {pos} ({ev_txt}, {wp:.0f}% equity vs {opp_txt()})"
         if decision == '3bet':
-            raise_to = call_amt * 3
+            raise_to = max(call_amt * 3, bb * 3)
             return f"3БЕТ до ~{raise_to} — сильная рука против рейза ({wp:.0f}% vs {opp_txt()})"
         if decision == '4bet':
-            raise_to = call_amt * 2
-            return f"4БЕТ/КОЛЛ — топ-диапазон против 3бета ({wp:.0f}% vs {opp_txt()})"
+            raise_to = max(call_amt * 2, bb * 4)
+            if bet_level >= 3:
+                return f"КОЛЛ/ОЛЛ-ИН — топ-диапазон, рентабельно идти ва-банк ({wp:.0f}% vs {opp_txt()})"
+            return f"4БЕТ до ~{raise_to} — топ-диапазон против 3бета ({wp:.0f}% vs {opp_txt()})"
         if decision == 'call':
             pot_odds_pct = call_amt / (pot + call_amt) * 100
             return f"КОЛЛ — рука в call-диапазоне {pos} ({wp:.0f}% vs пот-одды {pot_odds_pct:.0f}%)"
         if call_amt <= bb:
             return f"ФОЛД — рука вне диапазона открытия {pos} ({wp:.0f}% vs {opp_txt()})"
         pot_odds_pct = call_amt / (pot + call_amt) * 100
-        return f"ФОЛД — рука вне диапазона {pos} vs рейз ({wp:.0f}% vs пот-одды {pot_odds_pct:.0f}%)"
+        level_txt = {1: "рейз", 2: "3-бет", 3: "4-бет"}.get(bet_level, "рейз")
+        return f"ФОЛД — рука вне диапазона {pos} vs {level_txt} ({wp:.0f}% vs пот-одды {pot_odds_pct:.0f}%)"
 
     pot_odds_pct = call_amt / (pot + call_amt) * 100 if call_amt > 0 else 0
     if call_amt == 0:
@@ -1720,12 +1762,21 @@ def build_recommendation(game):
 
     if is_pf:
         rec_call = to_call(game, rec_pos)
+        bb_val = game.get('bb', 0) or 1
+        last_bet = game.get('last_bet', 0)
+        # bet_level: 1=open/first_raise, 2=3bet, 3=4bet+
+        if last_bet <= bb_val:
+            bet_level = 1
+        elif last_bet <= bb_val * 5:
+            bet_level = 2  # типичный 3-бет диапазон
+        else:
+            bet_level = 3  # 4-бет и выше
         rec = recommend_action(
             p.get('equity_share', 0), p.get('ev', 0),
             game.get('pot', 0), rec_call,
             pos=poker_label, cards=p.get('cards', []),
-            is_preflop=True, bb=game.get('bb', 0), n_opp=n_opp,
-            opener_pos=pf_agg_label)
+            is_preflop=True, bb=bb_val, n_opp=n_opp,
+            opener_pos=pf_agg_label, bet_level=bet_level)
     else:
         rec_call = to_call(game, rec_pos)
         board_b = game.get('board', [])

@@ -9,15 +9,24 @@ const SUITS = [
   { key: 'c', symbol: '♣', color: 'text-green-700' },
 ]
 
-export default function CardPicker({ onSelect, selectedCards = [], maxCards = 2, title = 'Выберите карты' }) {
+export default function CardPicker({ onSelect, selectedCards = [], maxCards = 2, title = 'Выберите карты', autoConfirm = false }) {
   const [picked, setPicked] = useState([])
 
   const toggle = (card) => {
     if (selectedCards.includes(card)) return
     setPicked((prev) => {
-      if (prev.includes(card)) return prev.filter((c) => c !== card)
+      if (prev.includes(card)) {
+        return prev.filter((c) => c !== card)
+      }
       if (prev.length >= maxCards) return prev
-      return [...prev, card]
+      const next = [...prev, card]
+      if (autoConfirm && next.length === maxCards) {
+        setTimeout(() => {
+          onSelect(next)
+          setPicked([])
+        }, 150)
+      }
+      return next
     })
   }
 
@@ -32,13 +41,16 @@ export default function CardPicker({ onSelect, selectedCards = [], maxCards = 2,
     <div className="bg-gray-800 rounded-xl p-3">
       <div className="flex items-center justify-between mb-2">
         <span className="text-sm font-semibold text-gray-300">{title}</span>
-        {picked.length > 0 && (
+        {!autoConfirm && picked.length > 0 && (
           <button
             onClick={confirm}
             className="bg-green-600 hover:bg-green-700 text-white text-xs font-semibold px-3 py-1 rounded-lg transition"
           >
             OK ({picked.length})
           </button>
+        )}
+        {autoConfirm && picked.length > 0 && picked.length < maxCards && (
+          <span className="text-xs text-gray-400">{picked.length}/{maxCards}</span>
         )}
       </div>
       <div className="flex gap-1">
@@ -53,7 +65,7 @@ export default function CardPicker({ onSelect, selectedCards = [], maxCards = 2,
                   key={card}
                   onClick={() => toggle(card)}
                   disabled={isUsed}
-                  className={`w-10 h-8 rounded text-xs font-bold flex items-center justify-center gap-0.5 transition
+                  className={`w-11 h-9 rounded text-sm font-bold flex items-center justify-center gap-0.5 transition
                     ${isUsed
                       ? 'bg-gray-700 opacity-30 cursor-not-allowed'
                       : isSelected
@@ -62,7 +74,7 @@ export default function CardPicker({ onSelect, selectedCards = [], maxCards = 2,
                     }`}
                 >
                   <span>{rank}</span>
-                  <span className={`text-[10px] ${suit.color}`}>{suit.symbol}</span>
+                  <span className={`text-xs ${suit.color}`}>{suit.symbol}</span>
                 </button>
               )
             })}
