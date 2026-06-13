@@ -44,18 +44,22 @@ export default function SetupPanel({ send, userId, sessionId }) {
 function TableSizeSelector({ send }) {
   return (
     <div className="flex-1 flex items-center justify-center">
-      <div className="bg-gray-800 rounded-2xl p-8 max-w-md w-full text-center">
-        <h2 className="text-xl font-bold mb-2">Стол на 6 мест</h2>
-        <p className="text-gray-400 text-sm mb-6">
-          Посадите наших игроков, остальные места можно занять врагами в любой
-          момент игры (всего до 6 за столом).
+      <div className="bg-gray-800 rounded-2xl p-8 max-w-md w-full">
+        <h2 className="text-xl font-bold mb-2 text-center">Количество мест за столом</h2>
+        <p className="text-gray-400 text-sm mb-6 text-center">
+          Свободные места можно занять врагами в любой момент игры.
         </p>
-        <button
-          onClick={() => send({ action: 'set_table', size: 6 })}
-          className="w-full bg-green-600 hover:bg-green-700 text-white text-lg font-bold py-4 rounded-xl transition"
-        >
-          Перейти к рассадке
-        </button>
+        <div className="grid grid-cols-5 gap-3">
+          {[2, 3, 4, 5, 6].map((n) => (
+            <button
+              key={n}
+              onClick={() => send({ action: 'set_table', size: n })}
+              className="bg-gray-700 hover:bg-green-600 text-white text-2xl font-bold py-4 rounded-xl transition"
+            >
+              {n}
+            </button>
+          ))}
+        </div>
       </div>
     </div>
   )
