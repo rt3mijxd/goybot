@@ -209,7 +209,8 @@ function UnifiedActionPanel({ send }) {
       {shownPlayers.map((pos) => {
         const seat = state.seats[pos]
         const isOur = seat.type === 'our'
-        const isEmpty = seat.type === 'empty' || seat.sat_out
+        const isEmpty = seat.type === 'empty'
+        const isPending = !!seat.pending
         const isCurrentTurn = currentTurn === pos
         const num = seat?.player?.number || '?'
         const name = isOur
@@ -232,6 +233,25 @@ function UnifiedActionPanel({ send }) {
                 className="ml-auto bg-green-700 hover:bg-green-600 text-white text-xs font-semibold px-3 py-1.5 rounded-lg transition"
               >
                 + Посадить врага
+              </button>
+            </div>
+          )
+        }
+
+        // Враг добавлен во время раунда — вступит в игру со следующего раунда
+        if (isPending) {
+          return (
+            <div key={pos} className="flex items-center gap-2 mb-1.5 rounded-lg p-1.5 bg-indigo-900/20 border border-indigo-700/40">
+              <span className="text-xs font-bold w-20 shrink-0 text-indigo-300">
+                В{num} ({label})
+              </span>
+              <span className="text-xs text-indigo-400">войдёт со след. раунда</span>
+              <button
+                onClick={() => send({ action: 'toggle_seat_out', position: pos })}
+                title="Убрать"
+                className="ml-auto shrink-0 bg-red-900/60 hover:bg-red-700 text-red-300 hover:text-white text-xs font-semibold px-2.5 py-1.5 rounded-lg border border-red-700/60 transition"
+              >
+                ✕ Убрать
               </button>
             </div>
           )

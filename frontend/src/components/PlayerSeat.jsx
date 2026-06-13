@@ -17,6 +17,7 @@ export default function PlayerSeat({ pos, seat, isActive, label }) {
 
   const isOur = seat.type === 'our'
   const isFolded = seat.folded
+  const isPending = !!seat.pending
   const player = seat.player || {}
   const cards = player.cards || []
   const equity = player.equity_share
@@ -30,7 +31,7 @@ export default function PlayerSeat({ pos, seat, isActive, label }) {
   return (
     <motion.div
       animate={isActive ? { scale: 1.05 } : { scale: 1 }}
-      className={`w-20 text-center ${isFolded ? 'opacity-40' : ''}`}
+      className={`w-20 text-center ${isFolded || isPending ? 'opacity-40' : ''}`}
     >
       {/* Avatar */}
       <div
@@ -47,6 +48,7 @@ export default function PlayerSeat({ pos, seat, isActive, label }) {
 
       {/* Name */}
       <div className="text-[10px] font-semibold mt-0.5 truncate">{name}</div>
+      {isPending && <div className="text-[8px] text-indigo-300">ждёт</div>}
 
       {/* Cards */}
       {cards.length > 0 && (

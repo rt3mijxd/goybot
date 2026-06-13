@@ -1433,7 +1433,7 @@ def active_positions(game):
     return [p for p in game['positions']
             if game['seats'].get(p, {}).get('type') in ('our', 'opponent')
             and not game['seats'].get(p, {}).get('folded', False)
-            and not game['seats'].get(p, {}).get('sat_out', False)]
+            and not game['seats'].get(p, {}).get('pending', False)]
 
 
 def _ordered_active(game, order):
@@ -1517,7 +1517,8 @@ def start_preflop(game):
     active = [p for p in order
               if p not in already_acted
               and game['seats'].get(p, {}).get('type') in ('our', 'opponent')
-              and not game['seats'].get(p, {}).get('folded', False)]
+              and not game['seats'].get(p, {}).get('folded', False)
+              and not game['seats'].get(p, {}).get('pending', False)]
     game['current_turn'] = active[0] if active else None
 
 
@@ -1577,7 +1578,7 @@ def only_one_left(game):
     active = [p for p in game['positions']
               if game['seats'].get(p, {}).get('type') in ('our', 'opponent')
               and not game['seats'].get(p, {}).get('folded', False)
-              and not game['seats'].get(p, {}).get('sat_out', False)]
+              and not game['seats'].get(p, {}).get('pending', False)]
     return len(active) <= 1
 
 
@@ -1585,7 +1586,7 @@ def winner_name(game):
     for p in game['positions']:
         s = game['seats'].get(p, {})
         if (s.get('type') in ('our', 'opponent') and not s.get('folded', False)
-                and not s.get('sat_out', False)):
+                and not s.get('pending', False)):
             if s['type'] == 'our':
                 name = s['player'].get('name') or f"Д{s['player'].get('number','?')}"
                 return f"{name} ({p})"
@@ -1613,6 +1614,8 @@ def reset_for_new_round(game):
     for pos in positions:
         s = game['seats'].get(pos)
         if not s: continue
+        # Игрок, добавленный в прошлом раунде, со следующего раунда — в игре
+        s.pop('pending', None)
         if s['type'] == 'our':
             s['folded'] = False
             s['player']['cards'] = []
@@ -1661,8 +1664,15 @@ def build_seats_from_claimed(game):
             }
         }
         our_num += 1
-    # Незанятые места остаются ПУСТЫМИ — оператор сажает врагов вручную
-    # из панели действий по мере их прихода за стол.
+    # Незанятые места внутри стола заполняются врагами автоматически.
+    # По ходу игры оператор может удалить врага (место станет пустым)
+    # и снова посадить нового — он войдёт в игру со следующего раунда.
+    opp_num = 1
+    for pos in positions:
+        if seats[pos].get('type') == 'empty':
+            seats[pos] = {'type': 'opponent', 'folded': False,
+                          'player': {'number': opp_num}}
+            opp_num += 1
     game['player_positions'] = [p for p in positions if seats[p].get('type') == 'our']
     game['opponent_positions'] = [p for p in positions if seats[p].get('type') == 'opponent']
 
@@ -1674,7 +1684,7 @@ async def recalc(game):
     our_hands = []
     for pos in game.get('positions', ALL_POSITIONS):
         s = seats.get(pos)
-        if s and s['type'] == 'our' and not s.get('folded', False) and not s.get('sat_out', False):
+        if s and s['type'] == 'our' and not s.get('folded', False) and not s.get('pending', False):
             cards = s['player'].get('cards', [])
             if cards and len(cards) == 2:
                 our_entries.append((pos, s))
@@ -1685,7 +1695,7 @@ async def recalc(game):
     is_postflop = game.get('state') not in (GameState.PREFLOP, GameState.DEALING)
     for pos in game.get('positions', ALL_POSITIONS):
         s = seats.get(pos, {})
-        if s.get('type') == 'opponent' and not s.get('folded', False) and not s.get('sat_out', False):
+        if s.get('type') == 'opponent' and not s.get('folded', False) and not s.get('pending', False):
             cur_act = opp_actions.get(pos, '')
             pf_act = opp_pf_actions.get(pos, '')
             opener = game.get('preflop_aggressor', '')
@@ -1705,7 +1715,7 @@ async def recalc(game):
     bb = game.get('bb', 0)
     n_opp_active = sum(1 for s in game['seats'].values()
                        if s.get('type') == 'opponent' and not s.get('folded', False)
-                       and not s.get('sat_out', False))
+                       and not s.get('pending', False))
     for i, (pos, s) in enumerate(our_entries):
         wp = result['individual'][i]
         poker_label = _get_poker_label(game, pos)

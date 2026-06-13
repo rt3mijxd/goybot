@@ -47,7 +47,7 @@ def serialize_game(game: dict, user_id: str) -> dict:
     for pos in ALL_POSITIONS:
         raw = g['seats'].get(pos, {'type': 'empty'})
         s = {'type': raw.get('type', 'empty'), 'folded': raw.get('folded', False),
-             'sat_out': raw.get('sat_out', False)}
+             'pending': raw.get('pending', False)}
         if raw.get('type') == 'our':
             p = raw.get('player', {})
             # Оператор видит все карты; наши игроки видят карты друг друга
@@ -922,11 +922,21 @@ async def handle_toggle_seat_out(session_id: str, game: dict, msg: dict):
             game['state'] = GameState.SHOWDOWN
             game['current_turn'] = None
     else:
-        # Пустое место → посадить нового врага
-        game['seats'][pos] = {'type': 'opponent', 'folded': False, 'player': {'number': 0}}
+        # Пустое место → посадить нового врага.
+        # Если раздача уже идёт — он входит в игру со следующего раунда (pending).
+        in_hand = game['state'] in (
+            GameState.PREFLOP, GameState.FLOP, GameState.TURN, GameState.RIVER
+        )
+        seat_obj = {'type': 'opponent', 'folded': False, 'player': {'number': 0}}
+        if in_hand:
+            seat_obj['pending'] = True
+        game['seats'][pos] = seat_obj
         _renumber_opponents(game)
         num = game['seats'][pos]['player']['number']
-        add_history(game, f"В{num} ({pos}) сел за стол")
+        if in_hand:
+            add_history(game, f"В{num} ({pos}) сядет со следующего раунда")
+        else:
+            add_history(game, f"В{num} ({pos}) сел за стол")
 
     await recalc(game)
     await broadcast(session_id)
