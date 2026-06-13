@@ -863,34 +863,58 @@ async def handle_board_replace(session_id: str, game: dict, msg: dict):
     await broadcast(session_id)
 
 
+def _renumber_opponents(game: dict):
+    """Перенумеровать врагов слева направо по порядку позиций (В1, В2, ...)."""
+    num = 1
+    opp_positions = []
+    for pos in game.get('positions', []):
+        s = game['seats'].get(pos, {})
+        if s.get('type') == 'opponent':
+            s.setdefault('player', {})['number'] = num
+            opp_positions.append(pos)
+            num += 1
+    game['opponent_positions'] = opp_positions
+
+
 async def handle_toggle_seat_out(session_id: str, game: dict, msg: dict):
-    """Убрать врага со стула / посадить врага обратно (без смены рассадки наших)."""
+    """Посадить врага на пустое место / убрать врага (место становится пустым).
+    Наших игроков не трогает."""
     pos = msg.get('position', '').upper()
-    seat = game['seats'].get(pos)
-    if not seat or seat.get('type') != 'opponent':
+    if pos not in game.get('positions', []):
         return
-    now_out = not seat.get('sat_out', False)
-    seat['sat_out'] = now_out
-    num = seat.get('player', {}).get('number', '?')
-    if now_out:
-        seat['folded'] = False
+    seat = game['seats'].get(pos, {'type': 'empty'})
+    seat_type = seat.get('type', 'empty')
+
+    if seat_type == 'our':
+        return  # наших игроков убирать нельзя
+
+    if seat_type == 'opponent':
+        # Убрать врага → место становится пустым/задисейбленным
+        was_turn = (game.get('current_turn') == pos)
+        game['seats'][pos] = {'type': 'empty'}
         game.get('opp_actions', {}).pop(pos, None)
-        add_history(game, f"В{num} ({pos}) вышел из-за стола")
-        # Если был его ход — передаём дальше
-        if game.get('current_turn') == pos:
+        game.get('opp_preflop_action', {}).pop(pos, None)
+        game.get('acted_this_street', set()).discard(pos)
+        _renumber_opponents(game)
+        add_history(game, f"Враг ({pos}) убран со стула")
+        if was_turn:
             nxt = next_to_act(game)
             if nxt is None:
                 end_street(game)
             else:
                 game['current_turn'] = nxt
-        # Если остался один активный — завершаем раздачу
-        if only_one_left(game) and game['state'] not in (GameState.SHOWDOWN,):
+        if only_one_left(game) and game['state'] != GameState.SHOWDOWN:
             w = winner_name(game)
             add_history(game, f"Победитель: {w}")
             game['state'] = GameState.SHOWDOWN
             game['current_turn'] = None
     else:
+        # Пустое место → посадить нового врага
+        game['seats'][pos] = {'type': 'opponent', 'folded': False, 'player': {'number': 0}}
+        _renumber_opponents(game)
+        num = game['seats'][pos]['player']['number']
         add_history(game, f"В{num} ({pos}) сел за стол")
+
     await recalc(game)
     await broadcast(session_id)
 

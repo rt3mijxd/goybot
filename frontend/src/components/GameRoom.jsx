@@ -159,10 +159,11 @@ function UnifiedActionPanel({ send }) {
   const currentTurn = state.current_turn
   const pot = state.pot || 0
 
-  // Все не фолднувшие места в порядке позиций (включая вышедших из-за стола врагов)
+  // Показываем все места в порядке позиций (пустые — как задисейбленные с кнопкой посадить).
+  // Скрываем только фолднувших.
   const shownPlayers = positions.filter((pos) => {
     const seat = state.seats?.[pos]
-    return seat && seat.type !== 'empty' && !seat.folded
+    return seat && !seat.folded
   })
 
   if (shownPlayers.length === 0) return null
@@ -205,6 +206,7 @@ function UnifiedActionPanel({ send }) {
       {shownPlayers.map((pos) => {
         const seat = state.seats[pos]
         const isOur = seat.type === 'our'
+        const isEmpty = seat.type === 'empty' || seat.sat_out
         const isCurrentTurn = currentTurn === pos
         const num = seat?.player?.number || '?'
         const name = isOur
@@ -214,16 +216,17 @@ function UnifiedActionPanel({ send }) {
         const ra = raiseAmounts[pos] || ''
         const cards = (isOur && seat.player?.cards) ? seat.player.cards : []
 
-        // Враг вышел из-за стола — показываем место как свободное с кнопкой посадить
-        if (seat.sat_out) {
+        // Пустое место — задисейблено, с кнопкой посадить врага
+        if (isEmpty) {
           return (
             <div key={pos} className="flex items-center gap-2 mb-1.5 rounded-lg p-1.5 bg-gray-900/40 border border-dashed border-gray-700">
-              <span className="text-xs font-bold w-24 shrink-0 text-gray-500">
-                {label} — свободно
+              <span className="text-xs font-bold w-20 shrink-0 text-gray-500">
+                {label}
               </span>
+              <span className="text-xs text-gray-600">место свободно</span>
               <button
                 onClick={() => send({ action: 'toggle_seat_out', position: pos })}
-                className="bg-green-800 hover:bg-green-700 text-white text-xs px-2.5 py-1 rounded transition"
+                className="ml-auto bg-green-700 hover:bg-green-600 text-white text-xs font-semibold px-3 py-1.5 rounded-lg transition"
               >
                 + Посадить врага
               </button>
@@ -240,21 +243,23 @@ function UnifiedActionPanel({ send }) {
                 : 'opacity-40'
             }`}
           >
-            <span className={`text-xs font-bold w-24 shrink-0 ${
-              isCurrentTurn
-                ? 'text-yellow-400'
-                : isOur ? 'text-green-400' : 'text-red-400'
-            }`}>
-              {name} ({label})
-            </span>
-            {/* Карты наших игроков */}
-            {isOur && (
-              <div className="flex gap-0.5 shrink-0 w-[58px]">
-                {cards.length === 2 && !cards.includes('??')
-                  ? cards.map((c, i) => <Card key={i} card={c} size="xs" />)
-                  : <span className="text-[10px] text-gray-500">нет карт</span>}
-              </div>
-            )}
+            {/* Имя + карты под ним */}
+            <div className="w-20 shrink-0 flex flex-col gap-0.5">
+              <span className={`text-xs font-bold leading-tight ${
+                isCurrentTurn
+                  ? 'text-yellow-400'
+                  : isOur ? 'text-green-400' : 'text-red-400'
+              }`}>
+                {name} ({label})
+              </span>
+              {isOur && (
+                <div className="flex gap-0.5">
+                  {cards.length === 2 && !cards.includes('??')
+                    ? cards.map((c, i) => <Card key={i} card={c} size="xs" />)
+                    : <span className="text-[10px] text-gray-500">нет карт</span>}
+                </div>
+              )}
+            </div>
             <div className={`flex gap-1 flex-wrap ${!isCurrentTurn ? 'pointer-events-none' : ''}`}>
               {(() => {
                 const callAmt = isCurrentTurn ? (state.call_amount || 0) : 0
@@ -326,10 +331,10 @@ function UnifiedActionPanel({ send }) {
             {!isOur && (
               <button
                 onClick={() => send({ action: 'toggle_seat_out', position: pos })}
-                title="Враг вышел из-за стола"
-                className="ml-auto shrink-0 text-gray-500 hover:text-red-400 text-sm px-1.5 py-0.5 rounded transition"
+                title="Враг вышел из-за стола — убрать со стула"
+                className="ml-auto shrink-0 bg-red-900/60 hover:bg-red-700 text-red-300 hover:text-white text-xs font-semibold px-2.5 py-1.5 rounded-lg border border-red-700/60 transition"
               >
-                ✕
+                ✕ Убрать
               </button>
             )}
           </div>

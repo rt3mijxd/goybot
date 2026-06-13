@@ -1661,15 +1661,10 @@ def build_seats_from_claimed(game):
             }
         }
         our_num += 1
-    opp_num = 1
-    opp_positions = []
-    for pos in positions:
-        if seats[pos].get('type') == 'empty':
-            seats[pos] = {'type': 'opponent', 'folded': False, 'player': {'number': opp_num}}
-            opp_positions.append(pos)
-            opp_num += 1
+    # Незанятые места остаются ПУСТЫМИ — оператор сажает врагов вручную
+    # из панели действий по мере их прихода за стол.
     game['player_positions'] = [p for p in positions if seats[p].get('type') == 'our']
-    game['opponent_positions'] = opp_positions
+    game['opponent_positions'] = [p for p in positions if seats[p].get('type') == 'opponent']
 
 
 async def recalc(game):

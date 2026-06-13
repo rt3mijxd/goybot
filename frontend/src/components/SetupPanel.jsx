@@ -96,7 +96,7 @@ function SeatPickerTable({ send, userId, sessionId }) {
       <h2 className="text-xl font-bold">Выберите места</h2>
       <p className="text-gray-400 text-sm">
         {isOperator && state.test_mode
-          ? 'Нажмите на места, где сидят наши игроки. Остальные — враги.'
+          ? 'Нажмите на места наших игроков. Врагов посадите позже в панели действий.'
           : isOperator
           ? 'Игроки выбирают места. Нажмите «Подтвердить» когда все сядут.'
           : 'Нажмите на место за столом чтобы занять его'}
