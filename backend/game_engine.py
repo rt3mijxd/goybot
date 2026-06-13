@@ -1432,7 +1432,8 @@ def get_postflop_order(game):
 def active_positions(game):
     return [p for p in game['positions']
             if game['seats'].get(p, {}).get('type') in ('our', 'opponent')
-            and not game['seats'].get(p, {}).get('folded', False)]
+            and not game['seats'].get(p, {}).get('folded', False)
+            and not game['seats'].get(p, {}).get('sat_out', False)]
 
 
 def _ordered_active(game, order):
@@ -1575,14 +1576,16 @@ def pot_add(game, pos, amount_to):
 def only_one_left(game):
     active = [p for p in game['positions']
               if game['seats'].get(p, {}).get('type') in ('our', 'opponent')
-              and not game['seats'].get(p, {}).get('folded', False)]
+              and not game['seats'].get(p, {}).get('folded', False)
+              and not game['seats'].get(p, {}).get('sat_out', False)]
     return len(active) <= 1
 
 
 def winner_name(game):
     for p in game['positions']:
         s = game['seats'].get(p, {})
-        if s.get('type') in ('our', 'opponent') and not s.get('folded', False):
+        if (s.get('type') in ('our', 'opponent') and not s.get('folded', False)
+                and not s.get('sat_out', False)):
             if s['type'] == 'our':
                 name = s['player'].get('name') or f"Д{s['player'].get('number','?')}"
                 return f"{name} ({p})"
@@ -1676,7 +1679,7 @@ async def recalc(game):
     our_hands = []
     for pos in game.get('positions', ALL_POSITIONS):
         s = seats.get(pos)
-        if s and s['type'] == 'our' and not s.get('folded', False):
+        if s and s['type'] == 'our' and not s.get('folded', False) and not s.get('sat_out', False):
             cards = s['player'].get('cards', [])
             if cards and len(cards) == 2:
                 our_entries.append((pos, s))
@@ -1687,7 +1690,7 @@ async def recalc(game):
     is_postflop = game.get('state') not in (GameState.PREFLOP, GameState.DEALING)
     for pos in game.get('positions', ALL_POSITIONS):
         s = seats.get(pos, {})
-        if s.get('type') == 'opponent' and not s.get('folded', False):
+        if s.get('type') == 'opponent' and not s.get('folded', False) and not s.get('sat_out', False):
             cur_act = opp_actions.get(pos, '')
             pf_act = opp_pf_actions.get(pos, '')
             opener = game.get('preflop_aggressor', '')
@@ -1706,7 +1709,8 @@ async def recalc(game):
     is_pf = game.get('state') == GameState.PREFLOP
     bb = game.get('bb', 0)
     n_opp_active = sum(1 for s in game['seats'].values()
-                       if s.get('type') == 'opponent' and not s.get('folded', False))
+                       if s.get('type') == 'opponent' and not s.get('folded', False)
+                       and not s.get('sat_out', False))
     for i, (pos, s) in enumerate(our_entries):
         wp = result['individual'][i]
         poker_label = _get_poker_label(game, pos)

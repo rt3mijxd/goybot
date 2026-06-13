@@ -10,6 +10,7 @@ import HistoryLog from './HistoryLog'
 import PlayerCardInput from './PlayerCardInput'
 import CardPicker from './CardPicker'
 import BlindsModal from './BlindsModal'
+import Card from './Card'
 
 export default function GameRoom({ sessionId, userId, userName, role, testMode }) {
   const { state, dispatch } = useGame()
@@ -84,9 +85,9 @@ export default function GameRoom({ sessionId, userId, userName, role, testMode }
                   <UnifiedActionPanel send={send} />
                 )}
 
-                {/* Борд — только когда все действия на улице завершены */}
-                {gs !== 'SHOWDOWN' && state.street_complete && (
-                  <BoardPicker send={send} />
+                {/* Борд: ввод новых карт когда улица завершена + правка борда в любой момент */}
+                {gs !== 'SHOWDOWN' && (
+                  <BoardPicker send={send} streetComplete={state.street_complete} />
                 )}
 
                 {/* Кнопки управления */}
@@ -158,13 +159,13 @@ function UnifiedActionPanel({ send }) {
   const currentTurn = state.current_turn
   const pot = state.pot || 0
 
-  // Все активные (не фолднувшие) игроки в порядке позиций
-  const activePlayers = positions.filter((pos) => {
+  // Все не фолднувшие места в порядке позиций (включая вышедших из-за стола врагов)
+  const shownPlayers = positions.filter((pos) => {
     const seat = state.seats?.[pos]
     return seat && seat.type !== 'empty' && !seat.folded
   })
 
-  if (activePlayers.length === 0) return null
+  if (shownPlayers.length === 0) return null
 
   const act = (pos, action, extra = {}) => {
     const seat = state.seats?.[pos]
@@ -177,13 +178,13 @@ function UnifiedActionPanel({ send }) {
     setRaiseAmounts((prev) => ({ ...prev, [pos]: '' }))
   }
 
-  // Пресеты рейза в % от банка
+  // Пресеты рейза в % от банка (на кнопке — номинал, в скобках %)
   const raisePresets = [
-    { label: '33%', mult: 0.33 },
-    { label: '50%', mult: 0.5 },
-    { label: '75%', mult: 0.75 },
-    { label: '100%', mult: 1.0 },
-    { label: '150%', mult: 1.5 },
+    { pct: 33, mult: 0.33 },
+    { pct: 50, mult: 0.5 },
+    { pct: 75, mult: 0.75 },
+    { pct: 100, mult: 1.0 },
+    { pct: 150, mult: 1.5 },
   ]
 
   return (
@@ -201,7 +202,7 @@ function UnifiedActionPanel({ send }) {
           </span>
         )}
       </div>
-      {activePlayers.map((pos) => {
+      {shownPlayers.map((pos) => {
         const seat = state.seats[pos]
         const isOur = seat.type === 'our'
         const isCurrentTurn = currentTurn === pos
@@ -209,7 +210,26 @@ function UnifiedActionPanel({ send }) {
         const name = isOur
           ? (seat.player?.name || `Д${num}`)
           : `В${num}`
+        const label = state.position_labels?.[pos] || pos
         const ra = raiseAmounts[pos] || ''
+        const cards = (isOur && seat.player?.cards) ? seat.player.cards : []
+
+        // Враг вышел из-за стола — показываем место как свободное с кнопкой посадить
+        if (seat.sat_out) {
+          return (
+            <div key={pos} className="flex items-center gap-2 mb-1.5 rounded-lg p-1.5 bg-gray-900/40 border border-dashed border-gray-700">
+              <span className="text-xs font-bold w-24 shrink-0 text-gray-500">
+                {label} — свободно
+              </span>
+              <button
+                onClick={() => send({ action: 'toggle_seat_out', position: pos })}
+                className="bg-green-800 hover:bg-green-700 text-white text-xs px-2.5 py-1 rounded transition"
+              >
+                + Посадить врага
+              </button>
+            </div>
+          )
+        }
 
         return (
           <div
@@ -225,8 +245,16 @@ function UnifiedActionPanel({ send }) {
                 ? 'text-yellow-400'
                 : isOur ? 'text-green-400' : 'text-red-400'
             }`}>
-              {name} ({state.position_labels?.[pos] || pos})
+              {name} ({label})
             </span>
+            {/* Карты наших игроков */}
+            {isOur && (
+              <div className="flex gap-0.5 shrink-0 w-[58px]">
+                {cards.length === 2 && !cards.includes('??')
+                  ? cards.map((c, i) => <Card key={i} card={c} size="xs" />)
+                  : <span className="text-[10px] text-gray-500">нет карт</span>}
+              </div>
+            )}
             <div className={`flex gap-1 flex-wrap ${!isCurrentTurn ? 'pointer-events-none' : ''}`}>
               {(() => {
                 const callAmt = isCurrentTurn ? (state.call_amount || 0) : 0
@@ -276,24 +304,34 @@ function UnifiedActionPanel({ send }) {
                   Рейз
                 </button>
               </div>
-              {/* Пресеты % от банка */}
+              {/* Пресеты: номинал + % от банка */}
               {isCurrentTurn && pot > 0 && (
-                <div className="flex gap-0.5">
-                  {raisePresets.map((p) => (
-                    <button
-                      key={p.label}
-                      onClick={() => {
-                        const amt = Math.round(pot * p.mult)
-                        setRaiseAmounts((prev) => ({ ...prev, [pos]: String(amt) }))
-                      }}
-                      className="bg-gray-700 hover:bg-gray-600 text-gray-300 text-[10px] px-1.5 py-0.5 rounded transition"
-                    >
-                      {p.label}
-                    </button>
-                  ))}
+                <div className="flex gap-0.5 flex-wrap">
+                  {raisePresets.map((p) => {
+                    const amt = Math.round(pot * p.mult)
+                    return (
+                      <button
+                        key={p.pct}
+                        onClick={() => setRaiseAmounts((prev) => ({ ...prev, [pos]: String(amt) }))}
+                        className="bg-gray-700 hover:bg-gray-600 text-gray-300 text-[10px] px-1.5 py-0.5 rounded transition"
+                      >
+                        {amt} <span className="text-gray-500">({p.pct}%)</span>
+                      </button>
+                    )
+                  })}
                 </div>
               )}
             </div>
+            {/* Убрать врага со стула */}
+            {!isOur && (
+              <button
+                onClick={() => send({ action: 'toggle_seat_out', position: pos })}
+                title="Враг вышел из-за стола"
+                className="ml-auto shrink-0 text-gray-500 hover:text-red-400 text-sm px-1.5 py-0.5 rounded transition"
+              >
+                ✕
+              </button>
+            )}
           </div>
         )
       })}
@@ -336,11 +374,11 @@ function PlayerActionPanel({ send, userId }) {
   }
 
   const raisePresets = [
-    { label: '33%', mult: 0.33 },
-    { label: '50%', mult: 0.5 },
-    { label: '75%', mult: 0.75 },
-    { label: '100%', mult: 1.0 },
-    { label: '150%', mult: 1.5 },
+    { pct: 33, mult: 0.33 },
+    { pct: 50, mult: 0.5 },
+    { pct: 75, mult: 0.75 },
+    { pct: 100, mult: 1.0 },
+    { pct: 150, mult: 1.5 },
   ]
 
   return (
@@ -387,16 +425,19 @@ function PlayerActionPanel({ send, userId }) {
         </div>
       </div>
       {pot > 0 && (
-        <div className="flex gap-1 justify-center mt-2">
-          {raisePresets.map((p) => (
-            <button
-              key={p.label}
-              onClick={() => setRaiseAmount(String(Math.round(pot * p.mult)))}
-              className="bg-gray-700 hover:bg-gray-600 text-gray-300 text-xs px-2 py-1 rounded transition"
-            >
-              {p.label}
-            </button>
-          ))}
+        <div className="flex gap-1 justify-center mt-2 flex-wrap">
+          {raisePresets.map((p) => {
+            const amt = Math.round(pot * p.mult)
+            return (
+              <button
+                key={p.pct}
+                onClick={() => setRaiseAmount(String(amt))}
+                className="bg-gray-700 hover:bg-gray-600 text-gray-300 text-xs px-2 py-1 rounded transition"
+              >
+                {amt} <span className="text-gray-500">({p.pct}%)</span>
+              </button>
+            )
+          })}
         </div>
       )}
     </div>

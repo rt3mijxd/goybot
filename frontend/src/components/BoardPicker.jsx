@@ -3,7 +3,7 @@ import { useGame } from '../context/GameContext'
 import CardPicker from './CardPicker'
 import Card from './Card'
 
-export default function BoardPicker({ send }) {
+export default function BoardPicker({ send, streetComplete = false }) {
   const { state } = useGame()
   const [editing, setEditing] = useState(false)
   const gs = state.state
@@ -20,20 +20,20 @@ export default function BoardPicker({ send }) {
   }
 
   // Настройки пикера для НОВОЙ улицы
-  let newCardCount = 3
-  let newTitle = 'Флоп (3 карты)'
+  let newCardCount = 0
+  let newTitle = ''
   if (gs === 'PREFLOP' || gs === 'DEALING') {
     newCardCount = 3; newTitle = 'Флоп (3 карты)'
   } else if (gs === 'FLOP') {
     newCardCount = 1; newTitle = 'Тёрн (1 карта)'
   } else if (gs === 'TURN') {
     newCardCount = 1; newTitle = 'Ривер (1 карта)'
-  } else {
-    return null
   }
 
+  const showNewPicker = streetComplete && newCardCount > 0
+
   // Режим редактирования — замена СУЩЕСТВУЮЩИХ карт борда
-  if (editing) {
+  if (editing && board.length > 0) {
     return (
       <div className="flex-1 min-w-[300px]">
         <div className="flex items-center gap-2 mb-1">
@@ -58,9 +58,12 @@ export default function BoardPicker({ send }) {
     )
   }
 
+  // Если борда нет и новую улицу вводить пока нельзя — скрываем
+  if (board.length === 0 && !showNewPicker) return null
+
   return (
     <div className="flex flex-col gap-2 flex-1 min-w-[300px]">
-      {/* Существующие карты борда с кнопкой редактирования */}
+      {/* Существующие карты борда с кнопкой редактирования (доступно в любой момент) */}
       {board.length > 0 && (
         <div className="bg-gray-800 rounded-xl p-3 flex items-center gap-3 flex-wrap">
           <span className="text-xs text-gray-400 font-semibold">Борд:</span>
@@ -76,14 +79,16 @@ export default function BoardPicker({ send }) {
         </div>
       )}
 
-      {/* Пикер для карт НОВОЙ улицы — борд блокирует уже использованные карты */}
-      <CardPicker
-        onSelect={(cards) => send({ action: 'board', cards })}
-        selectedCards={[...playerCards, ...board]}
-        maxCards={newCardCount}
-        title={newTitle}
-        autoConfirm={true}
-      />
+      {/* Пикер для карт НОВОЙ улицы — блокирует карты игроков и уже выложенный борд */}
+      {showNewPicker && (
+        <CardPicker
+          onSelect={(cards) => send({ action: 'board', cards })}
+          selectedCards={[...playerCards, ...board]}
+          maxCards={newCardCount}
+          title={newTitle}
+          autoConfirm={true}
+        />
+      )}
     </div>
   )
 }

@@ -45,7 +45,8 @@ def serialize_game(game: dict, user_id: str) -> dict:
     seats_out = {}
     for pos in ALL_POSITIONS:
         raw = g['seats'].get(pos, {'type': 'empty'})
-        s = {'type': raw.get('type', 'empty'), 'folded': raw.get('folded', False)}
+        s = {'type': raw.get('type', 'empty'), 'folded': raw.get('folded', False),
+             'sat_out': raw.get('sat_out', False)}
         if raw.get('type') == 'our':
             p = raw.get('player', {})
             # Оператор видит все карты; наши игроки видят карты друг друга
@@ -391,6 +392,10 @@ async def handle_message(session_id: str, user_id: str, msg: dict, ws: WebSocket
         if not is_responsible:
             return await send_error(ws, "только оператор выкладывает борд")
         await handle_board_replace(session_id, game, msg)
+    elif action == 'toggle_seat_out':
+        if not is_responsible:
+            return await send_error(ws, "только оператор управляет местами")
+        await handle_toggle_seat_out(session_id, game, msg)
     elif action == 'next_round':
         if not is_responsible:
             return await send_error(ws, "только оператор начинает раунд")
@@ -796,6 +801,13 @@ async def handle_board(session_id: str, game: dict, msg: dict):
     if not parsed:
         return
 
+    # Защита от дубликатов: внутри выборки, против борда и карт игроков
+    if len(set(parsed)) != len(parsed):
+        return
+    blocked = _player_cards_set(game) | set(game.get('board', []))
+    if any(c in blocked for c in parsed):
+        return
+
     if game['state'] in (GameState.PREFLOP, GameState.DEALING):
         if len(parsed) >= 3:
             game['board'] = parsed[:5]
@@ -817,10 +829,19 @@ async def handle_board(session_id: str, game: dict, msg: dict):
     await broadcast(session_id)
 
 
+def _player_cards_set(game: dict) -> set:
+    """Все карты на руках игроков (без '??')."""
+    used = set()
+    for s in game['seats'].values():
+        for c in s.get('player', {}).get('cards', []) or []:
+            if c and c != '??':
+                used.add(c)
+    return used
+
+
 async def handle_board_replace(session_id: str, game: dict, msg: dict):
-    """Заменяет существующие карты борда без смены состояния игры."""
-    if game.get('current_turn') is not None:
-        return
+    """Заменяет существующие карты борда без смены состояния игры.
+    Доступно в любой момент. Отклоняет дубликаты и карты, занятые игроками."""
     card_strs: list = msg.get('cards', [])
     parsed = [c for c in (parse_card(cs) for cs in card_strs) if c]
     if not parsed:
@@ -828,7 +849,48 @@ async def handle_board_replace(session_id: str, game: dict, msg: dict):
     n = len(parsed)
     if n > len(game.get('board', [])):
         return
+    # Защита от дубликатов: внутри новой выборки и против карт игроков
+    if len(set(parsed)) != len(parsed):
+        return
+    player_cards = _player_cards_set(game)
+    # Карты борда, которые НЕ заменяются (хвост), тоже не должны конфликтовать
+    untouched = set(game['board'][n:])
+    blocked = player_cards | untouched
+    if any(c in blocked for c in parsed):
+        return
     game['board'][:n] = parsed
+    await recalc(game)
+    await broadcast(session_id)
+
+
+async def handle_toggle_seat_out(session_id: str, game: dict, msg: dict):
+    """Убрать врага со стула / посадить врага обратно (без смены рассадки наших)."""
+    pos = msg.get('position', '').upper()
+    seat = game['seats'].get(pos)
+    if not seat or seat.get('type') != 'opponent':
+        return
+    now_out = not seat.get('sat_out', False)
+    seat['sat_out'] = now_out
+    num = seat.get('player', {}).get('number', '?')
+    if now_out:
+        seat['folded'] = False
+        game.get('opp_actions', {}).pop(pos, None)
+        add_history(game, f"В{num} ({pos}) вышел из-за стола")
+        # Если был его ход — передаём дальше
+        if game.get('current_turn') == pos:
+            nxt = next_to_act(game)
+            if nxt is None:
+                end_street(game)
+            else:
+                game['current_turn'] = nxt
+        # Если остался один активный — завершаем раздачу
+        if only_one_left(game) and game['state'] not in (GameState.SHOWDOWN,):
+            w = winner_name(game)
+            add_history(game, f"Победитель: {w}")
+            game['state'] = GameState.SHOWDOWN
+            game['current_turn'] = None
+    else:
+        add_history(game, f"В{num} ({pos}) сел за стол")
     await recalc(game)
     await broadcast(session_id)
 
