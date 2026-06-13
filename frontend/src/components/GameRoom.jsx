@@ -155,13 +155,16 @@ function UnifiedActionPanel({ send }) {
   const { state } = useGame()
   const [raiseAmounts, setRaiseAmounts] = useState({})
 
-  const positions = state.positions || []
+  // Порядок по очередности хода (с бэкенда), иначе — физический порядок мест
+  const order = (state.action_order && state.action_order.length)
+    ? state.action_order
+    : (state.positions || [])
   const currentTurn = state.current_turn
   const pot = state.pot || 0
 
-  // Показываем все места в порядке позиций (пустые — как задисейбленные с кнопкой посадить).
+  // Показываем все места в порядке хода (пустые — как задисейбленные с кнопкой посадить).
   // Скрываем только фолднувших.
-  const shownPlayers = positions.filter((pos) => {
+  const shownPlayers = order.filter((pos) => {
     const seat = state.seats?.[pos]
     return seat && !seat.folded
   })

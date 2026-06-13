@@ -20,6 +20,7 @@ from game_engine import (
     to_call, pot_add, is_bb_option, reset_for_new_round,
     add_history, recalc, build_recommendation,
     parse_card, card_to_short, cards_str, card_str,
+    get_preflop_order, get_postflop_order,
     TABLE_POSITIONS, ALL_POSITIONS, STAGE_NAMES,
     SUIT_DISPLAY, RANK_DISPLAY,
 )
@@ -163,10 +164,22 @@ def serialize_game(game: dict, user_id: str) -> dict:
         else:
             per_player_recs[pos] = '—'
 
+    # Порядок мест по очередности хода для текущей улицы (для панели действий)
+    try:
+        if g['state'] == GameState.PREFLOP:
+            action_order = get_preflop_order(g)
+        elif g['state'] in (GameState.FLOP, GameState.TURN, GameState.RIVER):
+            action_order = get_postflop_order(g)
+        else:
+            action_order = list(positions)
+    except Exception:
+        action_order = list(positions)
+
     return {
         'state': g['state'].name,
         'table_size': g.get('table_size', 0),
         'positions': positions,
+        'action_order': action_order,
         'player_positions': g.get('player_positions', []),
         'opponent_positions': g.get('opponent_positions', []),
         'seats': seats_out,

@@ -6,6 +6,7 @@ const initialState = {
   state: null,
   table_size: 0,
   positions: [],
+  action_order: [],
   player_positions: [],
   opponent_positions: [],
   seats: {},
