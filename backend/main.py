@@ -21,6 +21,7 @@ from game_engine import (
     add_history, recalc, build_recommendation,
     parse_card, card_to_short, cards_str, card_str,
     get_preflop_order, get_postflop_order,
+    position_labels_map, ring_positions, blind_positions, advance_button,
     TABLE_POSITIONS, ALL_POSITIONS, STAGE_NAMES,
     SUIT_DISPLAY, RANK_DISPLAY,
 )
@@ -99,36 +100,11 @@ def serialize_game(game: dict, user_id: str) -> dict:
         name = members.get(uid, uid[:6])
         claimed_out[pos] = {'user_id': uid, 'name': name}
 
-    # Определяем позиции дилера, SB, BB + ярлыки позиций по dealer_idx
+    # Дилер, SB, BB и ярлыки позиций — по кольцу занятых мест (с учётом дыр/pending)
     positions = g.get('positions', [])
-    n = len(positions)
-    dealer_pos = None
-    sb_pos = None
-    bb_pos = None
-    position_labels = {}  # физ.позиция -> текущий ярлык (UTG/MP/CO/BU/SB/BB)
-
-    if n >= 2:
-        dealer_idx = g.get('dealer_idx', 0) % n
-        dealer_pos = positions[dealer_idx]
-        # Стандартные ярлыки покерных позиций по размеру стола
-        label_sets = TABLE_POSITIONS  # {2: [BU,BB], 3: [BU,SB,BB], ...}
-        labels = list(label_sets.get(n, label_sets[6]))
-        # Ротируем: dealer (BU) = positions[dealer_idx]
-        # BU всегда последний в labels перед SB/BB
-        # labels идут в порядке: UTG, MP, CO, BU, SB, BB
-        # BU index в labels:
-        bu_idx_in_labels = labels.index('BU') if 'BU' in labels else 0
-        for i, phys_pos in enumerate(positions):
-            # Смещаем так, чтобы dealer_idx стал BU
-            label_i = (i - dealer_idx + bu_idx_in_labels) % n
-            position_labels[phys_pos] = labels[label_i]
-
-        if n == 2:
-            sb_pos = dealer_pos
-            bb_pos = positions[(dealer_idx + 1) % n]
-        else:
-            sb_pos = positions[(dealer_idx + 1) % n]
-            bb_pos = positions[(dealer_idx + 2) % n]
+    position_labels = position_labels_map(g)   # физ.позиция -> ярлык (UTG/MP/CO/BU/SB/BB)
+    dealer_pos = g.get('button_pos') if g.get('button_pos') in ring_positions(g) else None
+    sb_pos, bb_pos = blind_positions(g)
 
     # Краткая рекомендация для каждого нашего игрока
     # Показывается ТОЛЬКО когда это ход игрока. Иначе — пусто.
@@ -461,11 +437,14 @@ async def handle_set_table(session_id: str, game: dict, msg: dict):
     size = msg.get('size', 6)
     size = max(2, min(6, int(size)))
     game['table_size'] = size
-    game['positions'] = list(TABLE_POSITIONS.get(size, TABLE_POSITIONS[6]))
+    # Стол всегда имеет 6 физических мест; table_size — сколько занято изначально.
+    # Остальные места пустые и доступны для досадки врагов по ходу игры (до 6).
+    game['positions'] = list(TABLE_POSITIONS[6])
     game['seats'] = {pos: {'type': 'empty'} for pos in ALL_POSITIONS}
     game['seat_claimed'] = {}
+    game['button_pos'] = None
     game['state'] = GameState.SEAT_PICKING
-    add_history(game, f"Стол: {size} мест")
+    add_history(game, f"Игроков за столом: {size} (до 6)")
     await broadcast(session_id)
 
 
@@ -922,7 +901,11 @@ async def handle_toggle_seat_out(session_id: str, game: dict, msg: dict):
             game['state'] = GameState.SHOWDOWN
             game['current_turn'] = None
     else:
-        # Пустое место → посадить нового врага.
+        # Пустое место → посадить нового врага (максимум 6 игроков за столом).
+        occupied = sum(1 for p in game.get('positions', [])
+                       if game['seats'].get(p, {}).get('type') in ('our', 'opponent'))
+        if occupied >= 6:
+            return
         # Если раздача уже идёт — он входит в игру со следующего раунда (pending).
         in_hand = game['state'] in (
             GameState.PREFLOP, GameState.FLOP, GameState.TURN, GameState.RIVER

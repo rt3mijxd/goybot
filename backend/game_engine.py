@@ -1366,6 +1366,7 @@ def make_game():
         'responsible_name':   None,
         'table_size':         0,
         'positions':          [],
+        'button_pos':         None,
         'player_positions':   [],
         'opponent_positions': [],
         'seats':              {pos: {'type': 'empty'} for pos in ALL_POSITIONS},
@@ -1392,41 +1393,102 @@ def make_game():
     }
 
 
+def ring_positions(game):
+    """Места, участвующие в ТЕКУЩЕЙ раздаче: заняты (наш/враг) и не ожидают
+    следующего раунда (pending). Пустые места (дыры) пропускаются."""
+    return [p for p in game.get('positions', [])
+            if game['seats'].get(p, {}).get('type') in ('our', 'opponent')
+            and not game['seats'].get(p, {}).get('pending', False)]
+
+
+def _button_idx(ring, game):
+    bp = game.get('button_pos')
+    if bp in ring:
+        return ring.index(bp)
+    return 0
+
+
+def position_labels_map(game):
+    """Покерные ярлыки (UTG/MP/CO/BU/SB/BB) по кольцу занятых мест.
+    Кнопка = BU; дальше по часовой SB, BB, затем ранние позиции."""
+    ring = ring_positions(game)
+    m = len(ring)
+    labels = {}
+    if m == 0:
+        return labels
+    btn = _button_idx(ring, game)
+    if m == 1:
+        labels[ring[btn]] = 'BU'
+        return labels
+    if m == 2:
+        labels[ring[btn]] = 'BU'              # дилер = SB в хедз-апе
+        labels[ring[(btn + 1) % m]] = 'BB'
+        return labels
+    template = TABLE_POSITIONS.get(m, TABLE_POSITIONS[6])
+    bu_t = template.index('BU')
+    for i in range(m):
+        seat = ring[(btn + 1 + i) % m]
+        labels[seat] = template[(bu_t + 1 + i) % m]
+    return labels
+
+
+def blind_positions(game):
+    """Физические позиции SB и BB по кольцу занятых мест."""
+    ring = ring_positions(game)
+    m = len(ring)
+    if m < 2:
+        return (None, None)
+    btn = _button_idx(ring, game)
+    if m == 2:
+        return (ring[btn], ring[(btn + 1) % m])           # SB = дилер
+    return (ring[(btn + 1) % m], ring[(btn + 2) % m])
+
+
+def advance_button(game):
+    """Передвинуть кнопку дилера на следующее занятое место."""
+    positions = game.get('positions', [])
+    occ = [p for p in positions
+           if game['seats'].get(p, {}).get('type') in ('our', 'opponent')]
+    if not occ:
+        game['button_pos'] = None
+        return
+    cur = game.get('button_pos')
+    if cur not in occ:
+        game['button_pos'] = occ[0]
+        return
+    n = len(positions)
+    idx = positions.index(cur)
+    for k in range(1, n + 1):
+        cand = positions[(idx + k) % n]
+        if cand in occ:
+            game['button_pos'] = cand
+            return
+
+
 def get_preflop_order(game):
     """Preflop: первый ходит игрок после BB (UTG), последний BB.
-    Для 2 игроков: BU/SB ходит первым, BB вторым.
-    """
-    positions = game.get('positions', [])
-    n = len(positions)
-    if n < 2:
-        return positions[:]
-    dealer_idx = game.get('dealer_idx', 0) % n
-
-    if n == 2:
-        # Хедз-ап: BU/SB (dealer) ходит первым на префлопе
-        return [positions[dealer_idx], positions[(dealer_idx + 1) % n]]
-    else:
-        # Первый после BB = dealer_idx + 3
-        # Порядок: UTG → MP → CO → BU → SB → BB
-        return [positions[(dealer_idx + i) % n] for i in range(3, 3 + n)]
+    Для 2 игроков: BU/SB ходит первым, BB вторым."""
+    ring = ring_positions(game)
+    m = len(ring)
+    if m < 2:
+        return ring[:]
+    btn = _button_idx(ring, game)
+    if m == 2:
+        return [ring[btn], ring[(btn + 1) % m]]
+    return [ring[(btn + i) % m] for i in range(3, 3 + m)]
 
 
 def get_postflop_order(game):
-    """Postflop: первый ходит SB (или первый активный после дилера), последний BU.
-    Для 2 игроков: BB ходит первым, BU/SB вторым.
-    """
-    positions = game.get('positions', [])
-    n = len(positions)
-    if n < 2:
-        return positions[:]
-    dealer_idx = game.get('dealer_idx', 0) % n
-
-    if n == 2:
-        # Хедз-ап: BB ходит первым на постфлопе
-        return [positions[(dealer_idx + 1) % n], positions[dealer_idx]]
-    else:
-        # SB = dealer_idx + 1, BB = +2, UTG = +3, ..., BU = dealer_idx
-        return [positions[(dealer_idx + i) % n] for i in range(1, 1 + n)]
+    """Postflop: первый ходит SB, последний BU.
+    Для 2 игроков: BB ходит первым, BU/SB вторым."""
+    ring = ring_positions(game)
+    m = len(ring)
+    if m < 2:
+        return ring[:]
+    btn = _button_idx(ring, game)
+    if m == 2:
+        return [ring[(btn + 1) % m], ring[btn]]
+    return [ring[(btn + i) % m] for i in range(1, 1 + m)]
 
 
 def active_positions(game):
@@ -1443,15 +1505,7 @@ def _ordered_active(game, order):
 
 def is_bb_option(game, pos):
     """BB может чекнуть если никто не рейзнул (last_bet == bb)."""
-    positions = game.get('positions', [])
-    n = len(positions)
-    if n < 2:
-        return False
-    dealer_idx = game.get('dealer_idx', 0) % n
-    if n == 2:
-        bb_pos = positions[(dealer_idx + 1) % n]
-    else:
-        bb_pos = positions[(dealer_idx + 2) % n]
+    _, bb_pos = blind_positions(game)
     return (game.get('state') == GameState.PREFLOP
             and pos == bb_pos
             and game.get('last_bet', 0) <= game.get('bb', 0))
@@ -1491,17 +1545,12 @@ def start_preflop(game):
     if not game.get('last_bet'):
         game['last_bet'] = bb_val
 
-    # Определяем SB/BB по dealer_idx
-    dealer_idx = game.get('dealer_idx', 0) % max(n, 1)
-    if n == 2:
-        sb_pos = positions[dealer_idx]          # В хедз-апе дилер = SB
-        bb_pos = positions[(dealer_idx + 1) % n]
-    elif n >= 3:
-        sb_pos = positions[(dealer_idx + 1) % n]
-        bb_pos = positions[(dealer_idx + 2) % n]
-    else:
-        sb_pos = None
-        bb_pos = None
+    # Кнопка дилера должна стоять на занятом месте
+    if game.get('button_pos') not in ring_positions(game):
+        advance_button(game)
+
+    # Определяем SB/BB по кольцу занятых мест
+    sb_pos, bb_pos = blind_positions(game)
 
     if sb_pos and sb_pos not in game['street_contrib']:
         game['street_contrib'][sb_pos] = sb_val
@@ -1604,18 +1653,18 @@ def add_history(game, entry):
 
 def reset_for_new_round(game):
     """Сброс для нового раунда. Позиции игроков НЕ меняются, двигается только дилер."""
-    # Ротация дилера: сдвигаем dealer_idx на 1
     positions = game['positions']
-    if len(positions) >= 2:
-        dealer_idx = game.get('dealer_idx', 0)
-        dealer_idx = (dealer_idx + 1) % len(positions)
-        game['dealer_idx'] = dealer_idx
+    # Игроки, добавленные в прошлом раунде, со следующего раунда — в игре
+    for pos in positions:
+        s = game['seats'].get(pos)
+        if s:
+            s.pop('pending', None)
+    # Ротация дилера: кнопка переходит к следующему занятому месту
+    advance_button(game)
 
     for pos in positions:
         s = game['seats'].get(pos)
         if not s: continue
-        # Игрок, добавленный в прошлом раунде, со следующего раунда — в игре
-        s.pop('pending', None)
         if s['type'] == 'our':
             s['folded'] = False
             s['player']['cards'] = []
@@ -1664,17 +1713,33 @@ def build_seats_from_claimed(game):
             }
         }
         our_num += 1
-    # Незанятые места внутри стола заполняются врагами автоматически.
-    # По ходу игры оператор может удалить врага (место станет пустым)
-    # и снова посадить нового — он войдёт в игру со следующего раунда.
-    opp_num = 1
-    for pos in positions:
+    # Стол всегда имеет 6 физических мест. Изначально занято table_size мест:
+    # наши игроки + враги добиваются до table_size. Места заполняются со стороны
+    # блайндов (с конца), чтобы SB/BB были заняты, а ранние места (UTG/MP)
+    # оставались пустыми и доступными для досадки врагов по ходу игры (до 6).
+    target = game.get('table_size') or len(positions)
+    occupied = sum(1 for p in positions if seats[p].get('type') == 'our')
+    for pos in reversed(positions):
+        if occupied >= target:
+            break
         if seats[pos].get('type') == 'empty':
-            seats[pos] = {'type': 'opponent', 'folded': False,
-                          'player': {'number': opp_num}}
-            opp_num += 1
+            seats[pos] = {'type': 'opponent', 'folded': False, 'player': {'number': 0}}
+            occupied += 1
+    _renumber_opponents_engine(game)
     game['player_positions'] = [p for p in positions if seats[p].get('type') == 'our']
     game['opponent_positions'] = [p for p in positions if seats[p].get('type') == 'opponent']
+    if game.get('button_pos') not in ring_positions(game):
+        advance_button(game)
+
+
+def _renumber_opponents_engine(game):
+    """Перенумеровать врагов слева направо (В1, В2, ...)."""
+    num = 1
+    for pos in game.get('positions', []):
+        s = game['seats'].get(pos, {})
+        if s.get('type') == 'opponent':
+            s.setdefault('player', {})['number'] = num
+            num += 1
 
 
 async def recalc(game):
@@ -1733,16 +1798,7 @@ async def recalc(game):
 
 def _get_poker_label(game, phys_pos):
     """Получить покерный ярлык (UTG/CO/BU/SB/BB) для физической позиции."""
-    positions = game.get('positions', [])
-    n = len(positions)
-    if n < 2 or phys_pos not in positions:
-        return phys_pos
-    dealer_idx = game.get('dealer_idx', 0) % n
-    labels = list(TABLE_POSITIONS.get(n, TABLE_POSITIONS[6]))
-    bu_idx_in_labels = labels.index('BU') if 'BU' in labels else 0
-    i = positions.index(phys_pos)
-    label_i = (i - dealer_idx + bu_idx_in_labels) % n
-    return labels[label_i]
+    return position_labels_map(game).get(phys_pos, phys_pos)
 
 
 def build_recommendation(game):
