@@ -256,6 +256,50 @@ HAND_RANGES: Dict[str, Dict[str, tuple]] = {
 },
 }
 
+# ════════════════════════════════════════════════
+#  COLLUSION OPEN RANGES (команда = один суперигрок)
+#  Диапазон открытия выбирается по ЧИСЛУ ПРОТИВНИКОВ за столом,
+#  а не по формальной позиции — союзники между нами и оппонентами
+#  не считаются противниками.
+#    3 противника → «UTG»-список (тайтовый), для наших UTG/MP/CO
+#    2 противника → «BU»-список (шире),     для наших UTG/MP/CO/BU
+#  Условие: применяется, только если есть ещё противник, ходящий ПОСЛЕ нас.
+# ════════════════════════════════════════════════
+
+# Open raise при 3 противниках (тайтовый, «UTG»)
+COLLUSION_OPEN_3OPP = cat(
+    _pre(5, 14),                                  # 55+
+    _axs(2),                                      # A2s+
+    _axo(7), _oo(A, 5),                           # AKo..A7o, A5o
+    _kxs(5),                                      # K5s+
+    _kxo(9),                                      # K9o+
+    _qxs(8),                                      # Q8s+
+    _oo(Q, J), _oo(Q, T),                         # QJo, QTo
+    _jxs(9),                                      # J9s+
+    _oo(J, T),                                    # JTo
+    _txs(8),                                      # T8s+
+)
+
+# Open raise при 2 противниках (шире, «BU»)
+COLLUSION_OPEN_2OPP = cat(
+    _pre(2, 14),                                  # 22+
+    _axs(2),                                      # A2s+
+    _axo(7), _oo(A, 5), _oo(A, 4), _oo(A, 3), _oo(A, 2),  # AKo..A7o, A5o-A2o (без A6o)
+    _kxs(2),                                      # K2s+
+    _kxo(7),                                      # K7o+
+    _qxs(2),                                      # Q2s+
+    _qxo(8),                                      # Q8o+
+    _jxs(3),                                      # J3s+
+    _oo(J, T), _oo(J, 9), _oo(J, 8),              # JTo, J9o, J8o
+    _txs(5),                                      # T5s+
+    _oo(T, 9), _oo(T, 8),                         # T9o, T8o
+    _9xs(6),                                      # 96s+
+    _8xs(5),                                      # 85s+
+    _7xs(5),                                      # 75s+
+    _6xs(4),                                      # 64s+
+    _5xs(4),                                      # 54s
+)
+
 THREEBET_RANGES: Dict[str, Dict[str, Dict[str, list]]] = {
 'UTG': {
     'MP': {'3bet': cat(_pre(10,14), _ss(A,K),_ss(A,Q),_ss(A,J),_ss(A,T),_ss(A,5),
@@ -561,12 +605,16 @@ def hand_in_range(cards, pos, action):
     return any(frozenset(c) == hand_fs for c in combos)
 
 
-def classify_hand_preflop(cards, pos, bb, last_bet, opener_pos='', bet_level=1):
+def classify_hand_preflop(cards, pos, bb, last_bet, opener_pos='', bet_level=1, open_specs=None):
     """
     bet_level: 1 = открытый рейз (первая ставка), 2 = 3-бет, 3 = 4-бет+
+    open_specs: если задан — используется как диапазон открытия (сговор),
+                иначе берётся обычный диапазон позиции.
     """
     if last_bet == 0 or last_bet == bb:
         # Никто не рейзил — опен или ББ-опция
+        if open_specs is not None:
+            return 'raise' if _hand_in_specs(cards, open_specs) else 'fold'
         if hand_in_range(cards, pos, ''):
             return 'raise'
         return 'fold'
@@ -1304,7 +1352,7 @@ def postflop_recommend(wp, pot, call_amt, board, our_pos, aggressor, n_opp):
         return f"ЧЕК — слабая рука ({wp:.0f}%), {tex_lbl}, не вкладываем"
 
 
-def recommend_action(wp, ev, pot, call_amt, pos='', cards=None, is_preflop=False, bb=0, n_opp=0, opener_pos='', bet_level=1):
+def recommend_action(wp, ev, pot, call_amt, pos='', cards=None, is_preflop=False, bb=0, n_opp=0, opener_pos='', bet_level=1, open_specs=None):
     if pot == 0: pot = 1
     def opp_txt():
         n = n_opp
@@ -1314,7 +1362,7 @@ def recommend_action(wp, ev, pot, call_amt, pos='', cards=None, is_preflop=False
         return f"{n} оппонентов"
 
     if is_preflop and cards and pos:
-        decision = classify_hand_preflop(cards, pos, bb or 1, call_amt, opener_pos=opener_pos, bet_level=bet_level)
+        decision = classify_hand_preflop(cards, pos, bb or 1, call_amt, opener_pos=opener_pos, bet_level=bet_level, open_specs=open_specs)
         if decision == 'raise':
             raise_to = max(call_amt * 3, bb * 3) if call_amt > 0 else bb * 3
             ev_raise = calc_ev_raise(wp, pot, raise_to, n_opp)
@@ -1781,11 +1829,20 @@ async def recalc(game):
     n_opp_active = sum(1 for s in game['seats'].values()
                        if s.get('type') == 'opponent' and not s.get('folded', False)
                        and not s.get('pending', False))
+    pf_agg_recalc = game.get('preflop_aggressor', '')
     for i, (pos, s) in enumerate(our_entries):
         wp = result['individual'][i]
         poker_label = _get_poker_label(game, pos)
         seat_call = 0 if is_bb_option(game, pos) else to_call(game, pos)
-        if is_pf and seat_call <= bb and hand_in_range(s['player'].get('cards',[]), poker_label, ''):
+        # Диапазон открытия с учётом сговора (если это открытие)
+        cards_i = s['player'].get('cards', [])
+        if is_pf and seat_call <= bb:
+            open_specs_i = None if pf_agg_recalc else collusion_open_specs(game, pos, poker_label)
+            in_open = (_hand_in_specs(cards_i, open_specs_i) if open_specs_i is not None
+                       else hand_in_range(cards_i, poker_label, ''))
+        else:
+            in_open = False
+        if in_open:
             raise_to = max(bb * 3, 150)
             ev = calc_ev_raise(wp, pot, raise_to, n_opp_active)
         else:
@@ -1799,6 +1856,45 @@ async def recalc(game):
 def _get_poker_label(game, phys_pos):
     """Получить покерный ярлык (UTG/CO/BU/SB/BB) для физической позиции."""
     return position_labels_map(game).get(phys_pos, phys_pos)
+
+
+def _active_opponents(game):
+    """Число противников в текущей раздаче (заняты, не сфолдили, не pending)."""
+    return sum(1 for p in game.get('positions', [])
+               if game['seats'].get(p, {}).get('type') == 'opponent'
+               and not game['seats'].get(p, {}).get('folded', False)
+               and not game['seats'].get(p, {}).get('pending', False))
+
+
+def _opponents_behind(game, pos):
+    """Сколько противников ходят ПОСЛЕ нас на префлопе (ещё не действовали)."""
+    order = get_preflop_order(game)
+    if pos not in order:
+        return 0
+    idx = order.index(pos)
+    cnt = 0
+    for p in order[idx + 1:]:
+        s = game['seats'].get(p, {})
+        if (s.get('type') == 'opponent' and not s.get('folded', False)
+                and not s.get('pending', False)):
+            cnt += 1
+    return cnt
+
+
+def collusion_open_specs(game, pos, poker_label):
+    """Диапазон открытия с учётом сговора (команда = один суперигрок).
+    Возвращает spec-список или None (тогда применяется обычный диапазон позиции).
+
+    Выбор по ЧИСЛУ противников за столом; применяется только если есть
+    противник, ходящий после нас (мы «впереди» оппонента)."""
+    if _opponents_behind(game, pos) < 1:
+        return None
+    total_opp = _active_opponents(game)
+    if total_opp == 3 and poker_label in ('UTG', 'MP', 'CO'):
+        return COLLUSION_OPEN_3OPP
+    if total_opp == 2 and poker_label in ('UTG', 'MP', 'CO', 'BU'):
+        return COLLUSION_OPEN_2OPP
+    return None
 
 
 def build_recommendation(game):
@@ -1836,12 +1932,16 @@ def build_recommendation(game):
             bet_level = 2  # типичный 3-бет диапазон
         else:
             bet_level = 3  # 4-бет и выше
+        # Сговор: при открытии диапазон выбирается по числу противников
+        open_specs = None
+        if bet_level == 1 and not pf_agg:
+            open_specs = collusion_open_specs(game, rec_pos, poker_label)
         rec = recommend_action(
             p.get('equity_share', 0), p.get('ev', 0),
             game.get('pot', 0), rec_call,
             pos=poker_label, cards=p.get('cards', []),
             is_preflop=True, bb=bb_val, n_opp=n_opp,
-            opener_pos=pf_agg_label, bet_level=bet_level)
+            opener_pos=pf_agg_label, bet_level=bet_level, open_specs=open_specs)
     else:
         rec_call = to_call(game, rec_pos)
         board_b = game.get('board', [])
