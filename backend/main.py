@@ -22,6 +22,7 @@ from game_engine import (
     parse_card, card_to_short, cards_str, card_str,
     get_preflop_order, get_postflop_order,
     position_labels_map, ring_positions, blind_positions, advance_button,
+    place_initial_button,
     TABLE_POSITIONS, ALL_POSITIONS, STAGE_NAMES,
     SUIT_DISPLAY, RANK_DISPLAY,
 )
@@ -392,6 +393,10 @@ async def handle_message(session_id: str, user_id: str, msg: dict, ws: WebSocket
         if not is_responsible:
             return await send_error(ws, "только оператор управляет местами")
         await handle_toggle_seat_out(session_id, game, msg)
+    elif action == 'grow_table':
+        if not is_responsible:
+            return await send_error(ws, "только оператор управляет местами")
+        await handle_grow_table(session_id, game)
     elif action == 'next_round':
         if not is_responsible:
             return await send_error(ws, "только оператор начинает раунд")
@@ -444,14 +449,14 @@ async def handle_set_table(session_id: str, game: dict, msg: dict):
     size = msg.get('size', 6)
     size = max(2, min(6, int(size)))
     game['table_size'] = size
-    # Стол всегда имеет 6 физических мест; table_size — сколько занято изначально.
-    # Остальные места пустые и доступны для досадки врагов по ходу игры (до 6).
-    game['positions'] = list(TABLE_POSITIONS[6])
+    # Стол на выбранное число мест. Сверх него врагов можно досадить по ходу
+    # игры кнопкой «Добавить место» (до 6).
+    game['positions'] = list(TABLE_POSITIONS.get(size, TABLE_POSITIONS[6]))
     game['seats'] = {pos: {'type': 'empty'} for pos in ALL_POSITIONS}
     game['seat_claimed'] = {}
     game['button_pos'] = None
     game['state'] = GameState.SEAT_PICKING
-    add_history(game, f"Игроков за столом: {size} (до 6)")
+    add_history(game, f"Стол: {size} мест")
     await broadcast(session_id)
 
 
@@ -928,6 +933,38 @@ async def handle_toggle_seat_out(session_id: str, game: dict, msg: dict):
         else:
             add_history(game, f"В{num} ({pos}) сел за стол")
 
+    await recalc(game)
+    await broadcast(session_id)
+
+
+async def handle_grow_table(session_id: str, game: dict):
+    """Расширить стол на одно стандартное место (до 6) и посадить туда врага.
+    Если раздача уже идёт — враг входит со следующего раунда (pending)."""
+    cur = list(game.get('positions', []))
+    n = len(cur)
+    if n >= 6:
+        return
+    new_positions = list(TABLE_POSITIONS[n + 1])
+    new_seat = next((p for p in new_positions if p not in cur), None)
+    if not new_seat:
+        return
+    game['positions'] = new_positions
+    in_hand = game['state'] in (
+        GameState.PREFLOP, GameState.FLOP, GameState.TURN, GameState.RIVER
+    )
+    seat_obj = {'type': 'opponent', 'folded': False, 'player': {'number': 0}}
+    if in_hand:
+        seat_obj['pending'] = True
+    game['seats'][new_seat] = seat_obj
+    # места, которые были в раскладке, но остались пустыми, тоже делаем врагами
+    for p in new_positions:
+        if game['seats'].get(p, {}).get('type') == 'empty':
+            game['seats'][p] = {'type': 'opponent', 'folded': False, 'player': {'number': 0}}
+    _renumber_opponents(game)
+    game['table_size'] = n + 1
+    if game.get('button_pos') not in ring_positions(game):
+        place_initial_button(game)
+    add_history(game, f"Добавлено место {new_seat} (стол на {n + 1})")
     await recalc(game)
     await broadcast(session_id)
 

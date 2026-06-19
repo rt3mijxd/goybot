@@ -1845,18 +1845,12 @@ def build_seats_from_claimed(game):
             }
         }
         our_num += 1
-    # Стол всегда имеет 6 физических мест. Изначально занято table_size мест:
-    # наши игроки + враги добиваются до table_size. Места заполняются со стороны
-    # блайндов (с конца), чтобы SB/BB были заняты, а ранние места (UTG/MP)
-    # оставались пустыми и доступными для досадки врагов по ходу игры (до 6).
-    target = game.get('table_size') or len(positions)
-    occupied = sum(1 for p in positions if seats[p].get('type') == 'our')
-    for pos in reversed(positions):
-        if occupied >= target:
-            break
+    # Все незанятые нами места за столом (в раскладке на N мест) — враги.
+    # По ходу игры врага можно убрать (место станет пустым и доступным для
+    # повторной посадки), а стол можно расширить кнопкой «Добавить место» (до 6).
+    for pos in positions:
         if seats[pos].get('type') == 'empty':
             seats[pos] = {'type': 'opponent', 'folded': False, 'player': {'number': 0}}
-            occupied += 1
     _renumber_opponents_engine(game)
     game['player_positions'] = [p for p in positions if seats[p].get('type') == 'our']
     game['opponent_positions'] = [p for p in positions if seats[p].get('type') == 'opponent']
