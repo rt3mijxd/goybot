@@ -220,19 +220,19 @@ function UnifiedActionPanel({ send }) {
         const ra = raiseAmounts[pos] || ''
         const cards = (isOur && seat.player?.cards) ? seat.player.cards : []
 
-        // Пустое место — задисейблено, с кнопкой посадить врага
+        // Пустое место — задисейбленный ряд + кнопка посадить врага на эту позицию
         if (isEmpty) {
           return (
             <div key={pos} className="flex items-center gap-2 mb-1.5 rounded-lg p-1.5 bg-gray-900/40 border border-dashed border-gray-700">
               <span className="text-xs font-bold w-20 shrink-0 text-gray-500">
-                {label}
+                {pos}
               </span>
-              <span className="text-xs text-gray-600">место свободно</span>
+              <span className="text-xs text-gray-600 italic">свободно</span>
               <button
                 onClick={() => send({ action: 'toggle_seat_out', position: pos })}
                 className="ml-auto bg-green-700 hover:bg-green-600 text-white text-xs font-semibold px-3 py-1.5 rounded-lg transition"
               >
-                + Посадить врага
+                + Посадить врага на {pos}
               </button>
             </div>
           )

@@ -1559,8 +1559,25 @@ def blind_positions(game):
     return (ring[(btn + 1) % m], ring[(btn + 2) % m])
 
 
+def place_initial_button(game):
+    """Начальная установка кнопки дилера так, чтобы физические места совпадали
+    с покерными позициями: кнопка на физическом BU (если занят), иначе на
+    ближайшем занятом месте, идущем перед блайндами (CO→MP→UTG), затем блайнды."""
+    positions = game.get('positions', [])
+    occ = [p for p in positions
+           if game['seats'].get(p, {}).get('type') in ('our', 'opponent')]
+    if not occ:
+        game['button_pos'] = None
+        return
+    for pref in ('BU', 'CO', 'MP', 'UTG', 'SB', 'BB'):
+        if pref in occ:
+            game['button_pos'] = pref
+            return
+    game['button_pos'] = occ[0]
+
+
 def advance_button(game):
-    """Передвинуть кнопку дилера на следующее занятое место."""
+    """Передвинуть кнопку дилера на следующее занятое место (ротация раунда)."""
     positions = game.get('positions', [])
     occ = [p for p in positions
            if game['seats'].get(p, {}).get('type') in ('our', 'opponent')]
@@ -1569,7 +1586,7 @@ def advance_button(game):
         return
     cur = game.get('button_pos')
     if cur not in occ:
-        game['button_pos'] = occ[0]
+        place_initial_button(game)
         return
     n = len(positions)
     idx = positions.index(cur)
@@ -1844,7 +1861,7 @@ def build_seats_from_claimed(game):
     game['player_positions'] = [p for p in positions if seats[p].get('type') == 'our']
     game['opponent_positions'] = [p for p in positions if seats[p].get('type') == 'opponent']
     if game.get('button_pos') not in ring_positions(game):
-        advance_button(game)
+        place_initial_button(game)
 
 
 def _renumber_opponents_engine(game):
