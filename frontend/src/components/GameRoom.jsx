@@ -364,7 +364,7 @@ function UnifiedActionPanel({ send }) {
         )
       })}
       {/* Расширить стол: добавить ещё одно место (до 6 игроков) */}
-      {positions.length < 6 && (
+      {(state.positions || []).length < 6 && (
         <button
           onClick={() => send({ action: 'grow_table' })}
           className="mt-1 w-full bg-gray-700/60 hover:bg-gray-600 text-gray-300 text-xs font-semibold py-2 rounded-lg border border-dashed border-gray-600 transition"
