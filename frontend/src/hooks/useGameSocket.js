@@ -4,9 +4,11 @@ export default function useGameSocket(sessionId, userId, dispatch) {
   const wsRef = useRef(null)
   const [connected, setConnected] = useState(false)
   const reconnectTimer = useRef(null)
+  const stoppedRef = useRef(false)        // сессия мертва — не переподключаемся
+  const attemptsRef = useRef(0)           // для экспоненциального бэкоффа
 
   const connect = useCallback(() => {
-    if (!sessionId || !userId) return
+    if (!sessionId || !userId || stoppedRef.current) return
 
     const apiBase = import.meta.env.VITE_API_URL || ''
     let url
@@ -23,6 +25,7 @@ export default function useGameSocket(sessionId, userId, dispatch) {
 
     ws.onopen = () => {
       setConnected(true)
+      attemptsRef.current = 0
       clearTimeout(reconnectTimer.current)
     }
 
@@ -33,6 +36,11 @@ export default function useGameSocket(sessionId, userId, dispatch) {
           dispatch({ type: 'SET_STATE', payload: msg.data })
         } else if (msg.type === 'error') {
           dispatch({ type: 'SET_ERROR', payload: msg.message })
+        } else if (msg.type === 'session_gone') {
+          // Сессия не найдена/истекла (напр. сервер перезапущен) — прекращаем
+          // переподключения и просим создать новую.
+          stoppedRef.current = true
+          dispatch({ type: 'SET_ERROR', payload: 'Сессия не найдена или истекла. Создайте новую сессию или переподключитесь по ссылке.' })
         } else if (msg.type === 'ping') {
           ws.send(JSON.stringify({ action: 'pong' }))
         }
@@ -41,7 +49,11 @@ export default function useGameSocket(sessionId, userId, dispatch) {
 
     ws.onclose = () => {
       setConnected(false)
-      reconnectTimer.current = setTimeout(connect, 2000)
+      if (stoppedRef.current) return
+      // Экспоненциальный бэкофф: 1s, 2s, 4s ... до 15s максимум
+      attemptsRef.current += 1
+      const delay = Math.min(1000 * 2 ** (attemptsRef.current - 1), 15000)
+      reconnectTimer.current = setTimeout(connect, delay)
     }
 
     ws.onerror = () => {

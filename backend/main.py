@@ -293,12 +293,19 @@ async def get_state(session_id: str, user_id: str = "anon"):
 
 @app.websocket("/ws/{session_id}/{user_id}")
 async def ws_endpoint(websocket: WebSocket, session_id: str, user_id: str):
+    # Принимаем хендшейк, затем проверяем сессию — так клиент получает
+    # понятное сообщение 'session_gone' (а не глухой 403), и может прекратить
+    # бесконечные переподключения к мёртвой сессии (напр. после рестарта/деплоя).
+    await websocket.accept()
     sess = SESSIONS.get(session_id)
     if not sess:
-        await websocket.close(code=4004, reason="session not found")
+        try:
+            await websocket.send_json({'type': 'session_gone'})
+        except Exception:
+            pass
+        await websocket.close(code=4004)
         return
 
-    await websocket.accept()
     CONNECTIONS.setdefault(session_id, {})[user_id] = websocket
     game = sess['game']
 
