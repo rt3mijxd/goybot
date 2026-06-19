@@ -63,7 +63,7 @@ export default function GameRoom({ sessionId, userId, userName, role, testMode }
           <div className="flex-1 flex flex-col gap-2 min-w-0">
             {/* Стол */}
             <div className="lg:max-w-[600px] w-full mx-auto">
-              <PokerTable />
+              <PokerTable send={send} isOperator={isOperator} />
             </div>
 
             {/* ===== ОПЕРАТОР ===== */}

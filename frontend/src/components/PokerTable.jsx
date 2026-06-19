@@ -51,11 +51,12 @@ function BlindChip({ pos, label, color }) {
   )
 }
 
-export default function PokerTable() {
+export default function PokerTable({ send, isOperator = false }) {
   const { state } = useGame()
   const positions = state.positions || []
   const board = state.board || []
   const gs = state.state
+  const canEditSeats = isOperator && !!send && gs !== 'SEAT_PICKING'
 
   return (
     <div className="relative w-full mt-8 mb-4" style={{ paddingTop: 'min(62%, 350px)' }}>
@@ -102,7 +103,8 @@ export default function PokerTable() {
               className="absolute -translate-x-1/2 -translate-y-1/2 z-20"
               style={{ left: `${coords.x}%`, top: `${coords.y}%` }}
             >
-              <PlayerSeat pos={pos} seat={seat} isActive={state.current_turn === pos} label={state.position_labels?.[pos]} />
+              <PlayerSeat pos={pos} seat={seat} isActive={state.current_turn === pos} label={state.position_labels?.[pos]}
+                onToggleSeat={canEditSeats ? () => send({ action: 'toggle_seat_out', position: pos }) : null} />
             </div>
           )
         })}

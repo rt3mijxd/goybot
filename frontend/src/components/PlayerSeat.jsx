@@ -2,10 +2,21 @@ import React from 'react'
 import { motion } from 'framer-motion'
 import Card from './Card'
 
-export default function PlayerSeat({ pos, seat, isActive, label }) {
+export default function PlayerSeat({ pos, seat, isActive, label, onToggleSeat = null }) {
   const displayLabel = label || pos
 
   if (!seat || seat.type === 'empty') {
+    // Пустое место — оператор может посадить врага кликом
+    if (onToggleSeat) {
+      return (
+        <button onClick={onToggleSeat} title="Посадить врага" className="w-20 text-center group">
+          <div className="w-10 h-10 mx-auto rounded-full bg-gray-700/40 border border-dashed border-gray-600 flex items-center justify-center text-gray-500 group-hover:border-green-400 group-hover:text-green-400 group-hover:bg-green-900/30 transition">
+            <span className="text-base font-bold">+</span>
+          </div>
+          <div className="text-[9px] text-gray-600 group-hover:text-green-400 transition">{displayLabel}</div>
+        </button>
+      )
+    }
     return (
       <div className="w-20 text-center">
         <div className="w-10 h-10 mx-auto rounded-full bg-gray-700/50 border border-gray-600 flex items-center justify-center text-gray-500 text-[10px]">
@@ -28,14 +39,17 @@ export default function PlayerSeat({ pos, seat, isActive, label }) {
     ? player.name || `Д${player.number}`
     : `В${player.number}`
 
+  // Оператор может убрать врага со стула прямо со стола
+  const canRemove = !!onToggleSeat && !isOur
+
   return (
     <motion.div
       animate={isActive ? { scale: 1.05 } : { scale: 1 }}
-      className={`w-20 text-center ${isFolded || isPending ? 'opacity-40' : ''}`}
+      className={`w-20 text-center relative ${isFolded || isPending ? 'opacity-40' : ''}`}
     >
       {/* Avatar */}
       <div
-        className={`w-10 h-10 mx-auto rounded-full flex items-center justify-center text-xs font-bold border-2 transition-all ${
+        className={`w-10 h-10 mx-auto rounded-full flex items-center justify-center text-xs font-bold border-2 transition-all relative ${
           isActive
             ? 'border-yellow-400 bg-yellow-900/50 ring-2 ring-yellow-400/50'
             : isOur
@@ -44,6 +58,15 @@ export default function PlayerSeat({ pos, seat, isActive, label }) {
         }`}
       >
         <span className="text-[10px]">{displayLabel}</span>
+        {canRemove && (
+          <button
+            onClick={onToggleSeat}
+            title="Убрать врага со стула"
+            className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-red-700 hover:bg-red-500 text-white text-[9px] font-bold flex items-center justify-center border border-red-300 shadow z-30"
+          >
+            ✕
+          </button>
+        )}
       </div>
 
       {/* Name */}

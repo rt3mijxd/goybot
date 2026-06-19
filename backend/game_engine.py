@@ -596,6 +596,73 @@ def calc_ev_raise(wp, pot, raise_to, n_opp, equity_hu=None):
     return p_all_fold * ev_fold + p_call * ev_call
 
 
+RAKE_RATE = 0.05          # 5% рейк с банка
+RAKE_CAP_BB = 3.0         # потолок рейка = 3 больших блайнда
+
+
+def _rake(pot, bb):
+    cap = RAKE_CAP_BB * bb if bb else pot
+    return min(pot * RAKE_RATE, cap)
+
+
+def eval_collusion_continue(our_hands, opp_data, board, pot, calls, bb,
+                            n_sim_full=4000, n_sim_sub=2500):
+    """Сговор: команда = один суперигрок. Решаем, какое подмножество наших рук
+    выгоднее всего оставить в игре, когда есть ставка для колла.
+
+    Идея: руки уже вложившихся игроков (calls[i]==0) зафиксированы в банке.
+    Среди игроков, которым нужно доставлять (calls[i]>0), выбираем оптимальный
+    набор «сверху по эквити»: от никого до всех. Для каждого варианта считаем
+    командное EV с учётом банка, размеров ставок и рейка, и берём максимум.
+
+    Возвращает: individual (эквити каждой руки vs оппоненты), team (полный набор),
+    flags (list[bool] — продолжать ли каждой рукой), best_m, evs (по числу
+    доставляющих игроков)."""
+    k = len(our_hands)
+    full = simulate(our_hands, opp_data, board, n_sim=n_sim_full)
+    individual = full['individual']
+    team_full = full['team']
+
+    locked = [i for i in range(k) if calls[i] <= 0]        # уже в банке
+    deciding = [i for i in range(k) if calls[i] > 0]        # нужно решение
+    # дециды по убыванию эквити
+    deciding.sort(key=lambda i: individual[i], reverse=True)
+
+    locked_hands = [our_hands[i] for i in locked]
+
+    def team_eq(continue_idx):
+        idxs = locked + continue_idx
+        if not idxs:
+            return 0.0
+        if len(idxs) == k:
+            return team_full
+        subset = [our_hands[i] for i in idxs]
+        return simulate(subset, opp_data, board, n_sim=n_sim_sub)['team']
+
+    best_m, best_ev, evs = 0, None, {}
+    for m in range(0, len(deciding) + 1):
+        cont = deciding[:m]
+        cost = sum(calls[i] for i in cont)
+        p = team_eq(cont) / 100.0
+        pot_final = pot + cost
+        if not locked and m == 0:
+            ev = 0.0                                        # команда пасует — банк не наш
+        else:
+            ev = p * (pot_final - _rake(pot_final, bb)) - cost
+        evs[m] = ev
+        if best_ev is None or ev > best_ev + 1e-9:
+            best_ev, best_m = ev, m
+
+    flags = [False] * k
+    for i in locked:
+        flags[i] = True
+    for i in deciding[:best_m]:
+        flags[i] = True
+    return {'individual': individual, 'team': team_full,
+            'flags': flags, 'best_m': best_m, 'evs': evs,
+            'deciding': deciding, 'locked': locked}
+
+
 def hand_in_range(cards, pos, action):
     if not cards or len(cards) < 2:
         return False
@@ -1816,27 +1883,48 @@ async def recalc(game):
     if not our_hands:
         game['team_win_pct'] = 0.0
         return
-    sem = _get_sim_sem()
-    async with sem:
-        result = await asyncio.get_event_loop().run_in_executor(
-            _SIM_EXECUTOR,
-            lambda: simulate(our_hands, opp_data, board, n_sim=4000)
-        )
-    game['team_win_pct'] = result['team']
     pot = game.get('pot', 0)
     is_pf = game.get('state') == GameState.PREFLOP
     bb = game.get('bb', 0)
+
+    # Суммы для колла по нашим рукам (для модели сговора)
+    calls = []
+    for pos, s in our_entries:
+        c = 0 if is_bb_option(game, pos) else to_call(game, pos)
+        calls.append(c)
+    facing_bet = any(c > 0 for c in calls)
+    use_collusion = facing_bet and len(our_hands) >= 2
+
+    sem = _get_sim_sem()
+    async with sem:
+        if use_collusion:
+            result = await asyncio.get_event_loop().run_in_executor(
+                _SIM_EXECUTOR,
+                lambda: eval_collusion_continue(our_hands, opp_data, board, pot, calls, bb)
+            )
+        else:
+            result = await asyncio.get_event_loop().run_in_executor(
+                _SIM_EXECUTOR,
+                lambda: simulate(our_hands, opp_data, board, n_sim=4000)
+            )
+    game['team_win_pct'] = result['team']
     n_opp_active = sum(1 for s in game['seats'].values()
                        if s.get('type') == 'opponent' and not s.get('folded', False)
                        and not s.get('pending', False))
     pf_agg_recalc = game.get('preflop_aggressor', '')
+    flags = result.get('flags')
     for i, (pos, s) in enumerate(our_entries):
         wp = result['individual'][i]
         poker_label = _get_poker_label(game, pos)
-        seat_call = 0 if is_bb_option(game, pos) else to_call(game, pos)
+        seat_call = calls[i]
+        # Решение сговора (продолжать рукой или фолд) — когда есть ставка для колла
+        if use_collusion and flags is not None:
+            s['player']['team_continue'] = bool(flags[i])
+        else:
+            s['player']['team_continue'] = None
         # Диапазон открытия с учётом сговора (если это открытие)
         cards_i = s['player'].get('cards', [])
-        if is_pf and seat_call <= bb:
+        if is_pf and seat_call <= bb and not use_collusion:
             open_specs_i = None if pf_agg_recalc else collusion_open_specs(game, pos, poker_label)
             in_open = (_hand_in_specs(cards_i, open_specs_i) if open_specs_i is not None
                        else hand_in_range(cards_i, poker_label, ''))
@@ -1920,6 +2008,30 @@ def build_recommendation(game):
     is_pf = game['state'] == GameState.PREFLOP
     n_opp = sum(1 for s in game['seats'].values()
                 if s.get('type') == 'opponent' and not s.get('folded', False))
+
+    # ── СГОВОР: команда = один суперигрок ──
+    # Если против ставки решает модель совместного EV (какие наши руки оставить
+    # в игре), используем её решение, а НЕ диапазоны «vs 3-бет» (3-бет часто
+    # делают наши же игроки, и защищаться против них бессмысленно).
+    team_continue = p.get('team_continue')
+    if team_continue is not None:
+        wp = p.get('equity_share', 0)
+        rec_call = to_call(game, rec_pos)
+        n_team_in = sum(1 for s2 in game['seats'].values()
+                        if s2.get('type') == 'our' and not s2.get('folded', False)
+                        and s2.get('player', {}).get('team_continue'))
+        if team_continue:
+            if wp >= 62:
+                raise_to = max(rec_call * 3, game.get('bb', 0) * 3)
+                rec = (f"РЕЙЗ до ~{raise_to} — сильнейшая рука команды, "
+                       f"строим банк против оппонентов ({wp:.0f}% equity)")
+            else:
+                rec = (f"КОЛЛ {rec_call} — рука в оптимальном наборе команды "
+                       f"(сговор: продолжаем {n_team_in} рук, {wp:.0f}% equity)")
+        else:
+            rec = (f"ФОЛД — вне оптимального набора команды: выгоднее, чтобы "
+                   f"банк добирали более сильные руки напарников ({wp:.0f}% equity)")
+        return rec, poker_label, rec_pos
 
     if is_pf:
         rec_call = to_call(game, rec_pos)
