@@ -521,13 +521,15 @@ def get_postflop_range(action, known_set, board):
 #  SIMULATION
 # ════════════════════════════════════════════════
 
-def simulate(our_hands, opp_data, board, n_sim=4000):
+def simulate(our_hands, opp_data, board, n_sim=4000, dead_cards=None):
     if not our_hands:
         return {'individual': [], 'team': 0.0}
     if not opp_data:
         return {'individual': [100.0]*len(our_hands), 'team': 100.0}
 
-    known_base_list = [c for h in our_hands for c in h] + list(board)
+    # dead_cards — карты сфолдивших игроков (известны, выбыли из колоды):
+    # их нельзя раздавать оппонентам и они не выпадут на борде.
+    known_base_list = [c for h in our_hands for c in h] + list(board) + list(dead_cards or [])
     known_base_set  = set(known_base_list)
 
     opp_ranges = []
@@ -623,7 +625,7 @@ def _rake(pot, bb):
 
 
 def eval_collusion_continue(our_hands, opp_data, board, pot, calls, bb,
-                            n_sim_full=4000, n_sim_sub=2500):
+                            n_sim_full=4000, n_sim_sub=2500, dead_cards=None):
     """Сговор: команда = один суперигрок. Решаем, какое подмножество наших рук
     выгоднее всего оставить в игре, когда есть ставка для колла.
 
@@ -636,7 +638,7 @@ def eval_collusion_continue(our_hands, opp_data, board, pot, calls, bb,
     flags (list[bool] — продолжать ли каждой рукой), best_m, evs (по числу
     доставляющих игроков)."""
     k = len(our_hands)
-    full = simulate(our_hands, opp_data, board, n_sim=n_sim_full)
+    full = simulate(our_hands, opp_data, board, n_sim=n_sim_full, dead_cards=dead_cards)
     individual = full['individual']
     team_full = full['team']
 
@@ -654,7 +656,7 @@ def eval_collusion_continue(our_hands, opp_data, board, pot, calls, bb,
         if len(idxs) == k:
             return team_full
         subset = [our_hands[i] for i in idxs]
-        return simulate(subset, opp_data, board, n_sim=n_sim_sub)['team']
+        return simulate(subset, opp_data, board, n_sim=n_sim_sub, dead_cards=dead_cards)['team']
 
     best_m, best_ev, evs = 0, None, {}
     for m in range(0, len(deciding) + 1):
@@ -1897,6 +1899,15 @@ async def recalc(game):
             if cards and len(cards) == 2:
                 our_entries.append((pos, s))
                 our_hands.append(cards)
+    # Карты сфолдивших НАШИХ игроков — мёртвые/известные карты (учитываем как
+    # выбывшие из колоды при расчёте эквити оставшихся).
+    dead_cards = []
+    for pos in game.get('positions', ALL_POSITIONS):
+        s = seats.get(pos, {})
+        if s.get('type') == 'our' and s.get('folded', False):
+            for c in s.get('player', {}).get('cards', []) or []:
+                if c and c != '??':
+                    dead_cards.append(c)
     opp_data = []
     opp_actions = game.get('opp_actions', {})
     opp_pf_actions = game.get('opp_preflop_action', {})
@@ -1928,12 +1939,13 @@ async def recalc(game):
         if use_collusion:
             result = await asyncio.get_event_loop().run_in_executor(
                 _SIM_EXECUTOR,
-                lambda: eval_collusion_continue(our_hands, opp_data, board, pot, calls, bb)
+                lambda: eval_collusion_continue(our_hands, opp_data, board, pot, calls, bb,
+                                                dead_cards=dead_cards)
             )
         else:
             result = await asyncio.get_event_loop().run_in_executor(
                 _SIM_EXECUTOR,
-                lambda: simulate(our_hands, opp_data, board, n_sim=4000)
+                lambda: simulate(our_hands, opp_data, board, n_sim=4000, dead_cards=dead_cards)
             )
     game['team_win_pct'] = result['team']
     n_opp_active = sum(1 for s in game['seats'].values()
