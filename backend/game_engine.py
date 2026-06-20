@@ -221,8 +221,8 @@ HAND_RANGES: Dict[str, Dict[str, tuple]] = {
                  _ss(J,T),_ss(J,9), _ss(T,9))),
 },
 'CO': {
-    'open': ("55+ A2s+ A5o+ K5s+ K9o+ Q8s+ QJo QTo J9s+ JTo T8s+",
-             cat(_pre(5,14), _axs(2), _axo(5),
+    'open': ("55+ A2s+ AKo-ATo A9o A8o A7o A5o K5s+ K9o+ Q8s+ QJo QTo J9s+ JTo T8s+",
+             cat(_pre(5,14), _axs(2), _axo(7), _oo(A,5),
                  _kxs(5), _oo(K,Q),_oo(K,J),_oo(K,T),_oo(K,9),
                  _qxs(8), _oo(Q,J),_oo(Q,T),
                  _ss(J,T),_ss(J,9), _oo(J,T),
@@ -1933,12 +1933,10 @@ async def recalc(game):
             s['player']['team_continue'] = bool(flags[i])
         else:
             s['player']['team_continue'] = None
-        # Диапазон открытия с учётом сговора (если это открытие)
+        # Диапазон открытия с учётом правила соседства (если это открытие)
         cards_i = s['player'].get('cards', [])
-        if is_pf and seat_call <= bb and not use_collusion:
-            open_specs_i = None if pf_agg_recalc else collusion_open_specs(game, pos, poker_label)
-            in_open = (_hand_in_specs(cards_i, open_specs_i) if open_specs_i is not None
-                       else hand_in_range(cards_i, poker_label, ''))
+        if is_pf and seat_call <= bb and not use_collusion and not pf_agg_recalc:
+            in_open = _hand_in_specs(cards_i, team_open_specs(game, pos))
         else:
             in_open = False
         if in_open:
@@ -1980,20 +1978,40 @@ def _opponents_behind(game, pos):
     return cnt
 
 
-def collusion_open_specs(game, pos, poker_label):
-    """Диапазон открытия с учётом сговора (команда = один суперигрок).
-    Возвращает spec-список или None (тогда применяется обычный диапазон позиции).
+def team_open_label(game, pos):
+    """Правило сговора при открытии (мы ходим первыми):
+    если 2+ наших игрока сидят РЯДОМ (подряд за столом, без чужих между ними),
+    всем им присваивается диапазон позиции того, кто ходит ПЕРВЫМ (раньше по
+    очереди хода). Иначе — собственный диапазон позиции.
 
-    Выбор по ЧИСЛУ противников за столом; применяется только если есть
-    противник, ходящий после нас (мы «впереди» оппонента)."""
-    if _opponents_behind(game, pos) < 1:
-        return None
-    total_opp = _active_opponents(game)
-    if total_opp == 3 and poker_label in ('UTG', 'MP', 'CO'):
-        return COLLUSION_OPEN_3OPP
-    if total_opp == 2 and poker_label in ('UTG', 'MP', 'CO', 'BU'):
-        return COLLUSION_OPEN_2OPP
-    return None
+    Возвращает покерный ярлык (UTG/MP/CO/BU/SB/BB), чей диапазон применять."""
+    own = _get_poker_label(game, pos)
+    ring = ring_positions(game)
+    if pos not in ring:
+        return own
+    seats = game['seats']
+    i = ring.index(pos)
+    lo = i
+    while lo - 1 >= 0 and seats.get(ring[lo - 1], {}).get('type') == 'our':
+        lo -= 1
+    hi = i
+    while hi + 1 < len(ring) and seats.get(ring[hi + 1], {}).get('type') == 'our':
+        hi += 1
+    run = ring[lo:hi + 1]
+    if len(run) < 2:
+        return own
+    # «ходит первым» — самый ранний по очереди хода на префлопе
+    pf = get_preflop_order(game)
+    first = min(run, key=lambda p: pf.index(p) if p in pf else 999)
+    return _get_poker_label(game, first)
+
+
+def team_open_specs(game, pos):
+    """Spec-список диапазона открытия с учётом правила соседства (сговор)."""
+    label = team_open_label(game, pos)
+    entry = HAND_RANGES.get(label, HAND_RANGES['CO'])
+    _, specs = entry.get('open', ('', []))
+    return specs
 
 
 def build_recommendation(game):
@@ -2055,10 +2073,11 @@ def build_recommendation(game):
             bet_level = 2  # типичный 3-бет диапазон
         else:
             bet_level = 3  # 4-бет и выше
-        # Сговор: при открытии диапазон выбирается по числу противников
+        # Сговор: при открытии действует правило соседства (диапазон самого
+        # раннего из сидящих рядом наших игроков)
         open_specs = None
         if bet_level == 1 and not pf_agg:
-            open_specs = collusion_open_specs(game, rec_pos, poker_label)
+            open_specs = team_open_specs(game, rec_pos)
         rec = recommend_action(
             p.get('equity_share', 0), p.get('ev', 0),
             game.get('pot', 0), rec_call,
