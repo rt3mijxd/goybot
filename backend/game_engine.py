@@ -2138,6 +2138,164 @@ def is_team_designated_bettor(game, pos):
     return True
 
 
+def _max_run(rset):
+    r = sorted(rset)
+    best = cur = 1
+    for i in range(1, len(r)):
+        if r[i] == r[i - 1] + 1:
+            cur += 1; best = max(best, cur)
+        else:
+            cur = 1
+    return best if r else 0
+
+
+def _straight_window_count(rset):
+    best = 0
+    for lo in range(1, 11):
+        w = set(range(lo, lo + 5))
+        best = max(best, len(rset & w))
+    return best
+
+
+def classify_turn_card(flop, turn):
+    """Классифицирует эффект карты тёрна относительно флопа (13 категорий)."""
+    fr = [c[0] for c in flop]; fs = [c[1] for c in flop]
+    tr, ts = turn[0], turn[1]
+    # Спаривание
+    if tr in fr:
+        if len(set(fr)) < 3:          # флоп уже был парным → две пары/трипс на доске
+            return 'double_pair'
+        srt = sorted(fr)
+        if tr == srt[-1]:
+            return 'pair_high'
+        if tr == srt[0]:
+            return 'pair_low'
+        return 'pair_mid'
+    flop_sc = Counter(fs); board_sc = Counter(fs + [ts])
+    flush_closed = (max(flop_sc.values()) == 2 and board_sc[ts] >= 3) or max(flop_sc.values()) >= 3
+    fd_created = (max(flop_sc.values()) < 2 and board_sc[ts] == 2)
+    bset = set(fr + [tr]); fset = set(fr)
+    if 14 in bset:
+        bset = bset | {1}
+    if 14 in fset:
+        fset = fset | {1}
+    wc_now = _straight_window_count(bset); wc_flop = _straight_window_count(fset)
+    straight_closed = wc_now >= 4 and wc_flop < 4
+    straight_open = _max_run(bset) >= 4
+    sd_created = wc_now >= 3 and wc_flop < 3
+    is_over = tr > max(fr)
+    if flush_closed and straight_closed:
+        return 'close_combo'
+    if flush_closed:
+        return 'close_flush'
+    if straight_closed:
+        return 'close_oesd' if straight_open else 'close_gut'
+    if is_over and (fd_created or sd_created):
+        return 'overcard_draw'
+    if fd_created:
+        return 'made_fd'
+    if sd_created:
+        return 'made_sd'
+    if is_over:
+        return 'overcard'
+    return 'blank'
+
+
+def hand_strength_category(cards, board, equity):
+    """вэлью / средняя / дрова / ничего — по силе руки + дро + эквити."""
+    if not cards or len(cards) < 2:
+        return 'air'
+    seven = list(cards) + list(board)
+    cat = hand_rank(seven)[0]
+    sc = Counter(c[1] for c in seven)
+    fd = max(sc.values()) == 4                    # 4 к флешу (не готовый)
+    ranks = set(c[0] for c in seven)
+    if 14 in ranks:
+        ranks = ranks | {1}
+    sd = any(len(ranks & set(range(lo, lo + 5))) == 4 for lo in range(1, 11))
+    made_straight_plus = cat >= 4
+    if cat >= 2 or equity >= 68:                  # две пары+ / сильная рука
+        return 'value'
+    if cat == 1 and equity >= 58:                 # сильная топ-пара
+        return 'value'
+    if (fd or sd) and not made_straight_plus and equity < 68:
+        return 'draw'
+    if cat == 1 or 38 <= equity <= 62:
+        return 'middle'
+    return 'air'
+
+
+def _flop_bet_key(game):
+    fb = game.get('flop_bet_size', 0) or 0
+    if fb <= 0:
+        return 'any'
+    if fb < 0.42:
+        return '33'
+    if fb < 0.63:
+        return '50'
+    return '75'
+
+
+_TURN_CARD_RU = {
+    'blank': 'бланк', 'overcard': 'оверкарта', 'overcard_draw': 'оверкарта+дро',
+    'pair_low': 'спарила низ', 'pair_high': 'спарила верх', 'pair_mid': 'спарила середину',
+    'made_sd': 'создала стрит-дро', 'made_fd': 'создала флеш-дро',
+    'close_oesd': 'закрыла открытый стрит', 'close_gut': 'закрыла дырявый стрит',
+    'close_combo': 'закрыла комбо-дро', 'close_flush': 'закрыла флеш',
+    'double_pair': 'двойное спаривание',
+}
+_HAND_CAT_RU = {'value': 'вэлью', 'middle': 'средняя', 'draw': 'дрова', 'air': 'ничего'}
+
+
+def _turn_team_rec(game, rec_pos, board, p, n_opp, pf_agg):
+    """Рекомендация на тёрне, когда ходим первыми (таблица тёрна + координация)."""
+    cards = p.get('cards', [])
+    flop, turn = board[:3], board[3]
+    tcard = classify_turn_card(flop, turn)
+    hcat = hand_strength_category(cards, board, p.get('equity_share', 0))
+    multipot = n_opp >= 2
+    team_has_agg = (game['seats'].get(pf_agg, {}).get('type') == 'our') if pf_agg else False
+    tcard_ru = _TURN_CARD_RU.get(tcard, tcard)
+    hcat_ru = _HAND_CAT_RU.get(hcat, hcat)
+    pot = game.get('pot', 0)
+    n_our = sum(1 for s2 in game['seats'].values()
+                if s2.get('type') == 'our' and not s2.get('folded', False)
+                and not s2.get('pending', False))
+    suffix = f"Тёрн: {tcard_ru}, рука: {hcat_ru}"
+
+    if team_has_agg:
+        table = _PF.TURN_AGG_MU if multipot else _PF.TURN_AGG_HU
+        fb = _flop_bet_key(game)
+        action = (table.get(f"{tcard}|{hcat}|{fb}") or table.get(f"{tcard}|{hcat}|any")
+                  or table.get(f"{tcard}|{hcat}|50"))
+        if not action:
+            return f"ЧЕК — нет точного правила. {suffix}"
+        note = action
+        a = action.lower()
+        if a.startswith('чек'):
+            return f"ЧЕК — {note}. {suffix}"
+        m = re.search(r'(\d+(?:\.\d+)?)', action)
+        frac = float(m.group(1)) if m else 0.5
+        pct = int(frac * 100) if frac <= 1 else int(frac)
+        if n_our >= 2 and not is_team_designated_bettor(game, rec_pos):
+            return (f"ЧЕК — ставит напарник перед противником (координация). {suffix}")
+        amt = max(1, round(pot * pct / 100))
+        return f"БЕТ {amt} (~{pct}% банка) — {note}. {suffix}"
+    else:
+        table = _PF.TURN_CALL_MU if multipot else _PF.TURN_CALL_HU
+        action = table.get(f"{tcard}|{hcat}")
+        if not action:
+            return f"ЧЕК — нет точного правила. {suffix}"
+        a = action.lower()
+        if 'донк' in a:
+            m = re.search(r'(\d+)\s*%', action)
+            pct = int(m.group(1)) if m else 33
+            amt = max(1, round(pot * pct / 100))
+            return f"ДОНК-БЕТ {amt} (~{pct}%) — {action}. {suffix}"
+        # чек-колл / чек-рейз / чек-фолд — реакция на ставку; ходя первыми, чекаем
+        return f"ЧЕК (план: {action}). {suffix}"
+
+
 def build_recommendation(game):
     """Рекомендация показывается ТОЛЬКО когда ходит наш игрок.
     Возвращает (текст, покерный_ярлык, физическая_позиция)."""
@@ -2218,12 +2376,16 @@ def build_recommendation(game):
                 flop_aggressor=flop_agg_label,
                 turn_bet_size=game.get('turn_bet_size', 0),
                 agg_history=game.get('agg_history', ''), n_opp=n_opp)
-        elif len(board_b) >= 4 and p.get('cards'):
-            rec = turn_recommend(
-                p.get('equity_share', 0), game.get('pot', 0), rec_call,
-                board_b, p.get('cards', []), our_pos=poker_label,
-                flop_aggressor=flop_agg_label,
-                flop_bet_size=game.get('flop_bet_size', 0.5), n_opp=n_opp)
+        elif len(board_b) == 4 and p.get('cards'):
+            # ТЁРН. Facing bet -> уже обработан моделью сговора выше. Здесь ходим первыми.
+            if rec_call > 0:
+                rec = turn_recommend(
+                    p.get('equity_share', 0), game.get('pot', 0), rec_call,
+                    board_b, p.get('cards', []), our_pos=poker_label,
+                    flop_aggressor=flop_agg_label,
+                    flop_bet_size=game.get('flop_bet_size', 0.5), n_opp=n_opp)
+            else:
+                rec = _turn_team_rec(game, rec_pos, board_b, p, n_opp, pf_agg)
         elif len(board_b) == 3:
             # ФЛОП. Ставка для колла (facing bet) уже обработана моделью сговора
             # выше (team_continue). Здесь мы ХОДИМ ПЕРВЫМИ — таблица флопа.
