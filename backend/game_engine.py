@@ -648,15 +648,20 @@ def eval_collusion_continue(our_hands, opp_data, board, pot, calls, bb,
     deciding.sort(key=lambda i: individual[i], reverse=True)
 
     locked_hands = [our_hands[i] for i in locked]
+    base_dead = list(dead_cards or [])
 
     def team_eq(continue_idx):
-        idxs = locked + continue_idx
+        idxs = set(locked + continue_idx)
         if not idxs:
             return 0.0
         if len(idxs) == k:
             return team_full
         subset = [our_hands[i] for i in idxs]
-        return simulate(subset, opp_data, board, n_sim=n_sim_sub, dead_cards=dead_cards)['team']
+        # Карты НАШИХ рук, которые НЕ продолжают, остаются известными/мёртвыми:
+        # они блокируют ауты и комбо оппонентов (и улучшения оставшихся рук).
+        excluded = [c for j in range(k) if j not in idxs for c in our_hands[j]]
+        return simulate(subset, opp_data, board, n_sim=n_sim_sub,
+                        dead_cards=base_dead + excluded)['team']
 
     best_m, best_ev, evs = 0, None, {}
     for m in range(0, len(deciding) + 1):
