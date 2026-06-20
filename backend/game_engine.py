@@ -567,15 +567,23 @@ def simulate(our_hands, opp_data, board, n_sim=4000):
         if len(rem) < needed: continue
         full_board = list(board) + rem[:needed]
         valid += 1
-        all_hands = our_hands + opp_sim
-        all_ranks = [hand_rank(list(h) + full_board) for h in all_hands]
-        best      = max(all_ranks)
-        n_best    = sum(1 for r in all_ranks if r == best)
-        if any(all_ranks[i] == best for i in range(len(our_hands))):
+        n_our = len(our_hands)
+        our_ranks = [hand_rank(list(h) + full_board) for h in our_hands]
+        opp_ranks = [hand_rank(list(h) + full_board) for h in opp_sim]
+        # КОМАНДА = союзники: эквити каждой руки считается ПРОТИВ ОППОНЕНТОВ,
+        # а не против напарников. Напарник с более сильной рукой НЕ «обыгрывает» нас.
+        opp_best = max(opp_ranks) if opp_ranks else None
+        for i in range(n_our):
+            if opp_best is None or our_ranks[i] > opp_best:
+                ind_wins[i] += 1.0
+            elif our_ranks[i] == opp_best:
+                ind_wins[i] += 0.5
+        # Команда выигрывает, если ЛУЧШАЯ наша рука бьёт всех оппонентов
+        team_best = max(our_ranks)
+        if opp_best is None or team_best > opp_best:
             team_wins += 1
-        for i in range(len(our_hands)):
-            if all_ranks[i] == best:
-                ind_wins[i] += 1.0 / n_best
+        elif team_best == opp_best:
+            team_wins += 0.5
     if valid == 0:
         return {'individual': [33.0]*len(our_hands), 'team': 33.0}
     return {
