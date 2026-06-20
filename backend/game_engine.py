@@ -208,9 +208,14 @@ def cat(*parts): return sum((list(p) for p in parts), [])
 
 HAND_RANGES: Dict[str, Dict[str, tuple]] = {
 'UTG': {
-    'open': ("99+ A2s+ ATo+ K9s+ KTo+ QTs+ QJo JTs",
-             cat(_pre(9,14), _axs(2), _axo(10), _ss(K,9),_ss(K,T),_ss(K,J),_ss(K,Q),
-                 _oo(K,Q),_oo(K,J),_oo(K,T), _ss(Q,J),_ss(Q,T), _oo(Q,J), _ss(J,T))),
+    # Диапазон для команды из трёх игроков (PDF 21.06): UTG открывает широко,
+    # совпадает с CO (55+ ...). Раньше был тайтовый 99+.
+    'open': ("55+ A2s+ AKo-ATo A9o A8o A7o A5o K5s+ K9o+ Q8s+ QJo QTo J9s+ JTo T8s+",
+             cat(_pre(5,14), _axs(2), _axo(7), _oo(A,5),
+                 _kxs(5), _oo(K,Q),_oo(K,J),_oo(K,T),_oo(K,9),
+                 _qxs(8), _oo(Q,J),_oo(Q,T),
+                 _ss(J,T),_ss(J,9), _oo(J,T),
+                 _txs(8))),
 },
 'MP': {
     'open': ("88+ A2s+ ATo+ A9o A8o A5o K7s+ KTo+ Q9s+ QJo QTo J9s+ T9s",
