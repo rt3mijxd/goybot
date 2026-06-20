@@ -2163,7 +2163,7 @@ def classify_turn_card(flop, turn):
     tr, ts = turn[0], turn[1]
     # Спаривание
     if tr in fr:
-        if len(set(fr)) < 3:          # флоп уже был парным → две пары/трипс на доске
+        if len(set(fr)) < len(fr):    # доска уже была парной → две пары/трипс
             return 'double_pair'
         srt = sorted(fr)
         if tr == srt[-1]:
@@ -2236,6 +2236,17 @@ def _flop_bet_key(game):
     return '75'
 
 
+def _turn_bet_key(game):
+    tb = game.get('turn_bet_size', 0) or 0
+    if tb <= 0:
+        return 'check'
+    if tb < 0.42:
+        return '33'
+    if tb < 0.65:
+        return '50'
+    return '80'
+
+
 _TURN_CARD_RU = {
     'blank': 'бланк', 'overcard': 'оверкарта', 'overcard_draw': 'оверкарта+дро',
     'pair_low': 'спарила низ', 'pair_high': 'спарила верх', 'pair_mid': 'спарила середину',
@@ -2293,6 +2304,57 @@ def _turn_team_rec(game, rec_pos, board, p, n_opp, pf_agg):
             amt = max(1, round(pot * pct / 100))
             return f"ДОНК-БЕТ {amt} (~{pct}%) — {action}. {suffix}"
         # чек-колл / чек-рейз / чек-фолд — реакция на ставку; ходя первыми, чекаем
+        return f"ЧЕК (план: {action}). {suffix}"
+
+
+_RIVER_CARD_MAP = {'made_fd': 'blank', 'made_sd': 'blank', 'overcard_draw': 'overcard',
+                   'double_pair': 'pair_high', 'pair_mid': 'pair_low'}
+
+
+def _river_team_rec(game, rec_pos, board, p, n_opp, pf_agg):
+    """Рекомендация на ривере, когда ходим первыми (таблица ривера + координация)."""
+    cards = p.get('cards', [])
+    raw = classify_turn_card(board[:4], board[4])
+    rcard = _RIVER_CARD_MAP.get(raw, raw)
+    hcat = hand_strength_category(cards, board, p.get('equity_share', 0))
+    if hcat == 'draw':
+        hcat = 'air'                      # дро не закрылось к риверу
+    multipot = n_opp >= 2
+    team_has_agg = (game['seats'].get(pf_agg, {}).get('type') == 'our') if pf_agg else False
+    pot = game.get('pot', 0)
+    suffix = f"Ривер: {_TURN_CARD_RU.get(rcard, rcard)}, рука: {_HAND_CAT_RU.get(hcat, hcat)}"
+    n_our = sum(1 for s2 in game['seats'].values()
+                if s2.get('type') == 'our' and not s2.get('folded', False)
+                and not s2.get('pending', False))
+
+    if team_has_agg:
+        table = _PF.RIVER_AGG_MU if multipot else _PF.RIVER_AGG_HU
+        tbk = _turn_bet_key(game)
+        action = (table.get(f"{rcard}|{hcat}|{tbk}") or table.get(f"{rcard}|{hcat}|any")
+                  or table.get(f"{rcard}|{hcat}|check"))
+        if not action:
+            return f"ЧЕК — нет точного правила. {suffix}"
+        a = action.lower()
+        if a.startswith('чек'):
+            return f"ЧЕК — {action}. {suffix}"
+        m = re.search(r'(\d+(?:\.\d+)?)', action)
+        frac = float(m.group(1)) if m else 0.5
+        pct = int(frac * 100) if frac <= 1 else int(frac)
+        if n_our >= 2 and not is_team_designated_bettor(game, rec_pos):
+            return f"ЧЕК — ставит напарник перед противником (координация). {suffix}"
+        amt = max(1, round(pot * pct / 100))
+        return f"БЕТ {amt} (~{pct}% банка) — {action}. {suffix}"
+    else:
+        table = _PF.RIVER_CALL_MU if multipot else _PF.RIVER_CALL_HU
+        hk = _norm_agg_history(game.get('agg_history', ''))
+        action = (table.get(f"{rcard}|{hcat}|{hk}") or table.get(f"{rcard}|{hcat}|any"))
+        if not action:
+            return f"ЧЕК. {suffix}"
+        if 'донк' in action.lower():
+            m = re.search(r'(\d+)', action)
+            pct = int(m.group(1)) if m else 50
+            amt = max(1, round(pot * pct / 100))
+            return f"ДОНК-БЕТ {amt} (~{pct}%) — {action}. {suffix}"
         return f"ЧЕК (план: {action}). {suffix}"
 
 
@@ -2370,12 +2432,16 @@ def build_recommendation(game):
         rec_call = to_call(game, rec_pos)
         board_b = game.get('board', [])
         if len(board_b) >= 5 and p.get('cards'):
-            rec = river_recommend(
-                p.get('equity_share', 0), game.get('pot', 0), rec_call,
-                board_b, p.get('cards', []), our_pos=poker_label,
-                flop_aggressor=flop_agg_label,
-                turn_bet_size=game.get('turn_bet_size', 0),
-                agg_history=game.get('agg_history', ''), n_opp=n_opp)
+            # РИВЕР. Facing bet -> модель сговора выше. Здесь ходим первыми.
+            if rec_call > 0:
+                rec = river_recommend(
+                    p.get('equity_share', 0), game.get('pot', 0), rec_call,
+                    board_b, p.get('cards', []), our_pos=poker_label,
+                    flop_aggressor=flop_agg_label,
+                    turn_bet_size=game.get('turn_bet_size', 0),
+                    agg_history=game.get('agg_history', ''), n_opp=n_opp)
+            else:
+                rec = _river_team_rec(game, rec_pos, board_b, p, n_opp, pf_agg)
         elif len(board_b) == 4 and p.get('cards'):
             # ТЁРН. Facing bet -> уже обработан моделью сговора выше. Здесь ходим первыми.
             if rec_call > 0:
