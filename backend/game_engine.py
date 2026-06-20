@@ -1931,7 +1931,14 @@ async def recalc(game):
     for pos, s in our_entries:
         c = 0 if is_bb_option(game, pos) else to_call(game, pos)
         calls.append(c)
-    facing_bet = any(c > 0 for c in calls)
+    # «Против ставки» = есть РЕАЛЬНЫЙ рейз/бет, а не просто блайнды.
+    # Префлоп: кто-то поднял сверх ББ (last_bet > bb). Иначе это ОТКРЫТИЕ —
+    # играем по диапазону, а не по модели «колл/фолд по эквити» (иначе бот
+    # фолдит даже сильные руки, считая лимп невыгодным по пот-оддсам).
+    if is_pf:
+        facing_bet = game.get('last_bet', 0) > bb
+    else:
+        facing_bet = game.get('street_bet_to', 0) > 0
     use_collusion = facing_bet and len(our_hands) >= 2
 
     sem = _get_sim_sem()
