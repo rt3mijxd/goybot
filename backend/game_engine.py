@@ -5,9 +5,13 @@ All GTO ranges, simulation, recommendation logic preserved.
 
 import asyncio
 import random
+import re
+from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from enum import Enum, auto
 from typing import Dict, List, Optional, Tuple
+
+import postflop_tables as _PF
 
 _SIM_SEMAPHORE: asyncio.Semaphore | None = None
 _SIM_EXECUTOR = ThreadPoolExecutor(max_workers=2, thread_name_prefix='sim')
@@ -2019,6 +2023,121 @@ def team_open_specs(game, pos):
     return specs
 
 
+# ════════════════════════════════════════════════
+#  ПОСТФЛОП: классификатор доски + табличная стратегия (флоп)
+# ════════════════════════════════════════════════
+
+def _flop_suit_class(board):
+    cnt = Counter(c[1] for c in board)
+    m = max(cnt.values())
+    return 'mono' if m >= 3 else 'two_tone' if m == 2 else 'rainbow'
+
+
+def _flop_conn_class(ranks):
+    rs = set(ranks)
+    if 14 in rs:
+        rs = rs | {1}            # туз как «1» для младшего стрита
+    has = lambda x: x in rs
+    R = sorted(rs)
+    for r in R:                  # три подряд → OES
+        if has(r) and has(r + 1) and has(r + 2):
+            return 'OES'
+    if any(has(r) and has(r + 1) for r in R):   # две подряд → OPESD
+        return 'OPESD'
+    if any(has(r) and has(r + 2) for r in R):   # дырка в одну карту → гатшот
+        return 'gutshot'
+    return 'unconn'
+
+
+def _flop_pair_class(ranks):
+    m = max(Counter(ranks).values())
+    return 'three' if m >= 3 else 'two' if m == 2 else 'none'
+
+
+def _flop_high_class(ranks):
+    has_ace = 14 in ranks
+    others = [r for r in ranks if r != 14]
+    if has_ace:
+        bw_o = sum(1 for r in others if 10 <= r <= 13)
+        low_o = sum(1 for r in others if 2 <= r <= 5)
+        if bw_o >= 1:
+            return 'bw_ace'
+        if low_o >= 2:
+            return 'low_ace'
+        return 'low_ace' if low_o >= 1 else 'mid'
+    bw = sum(1 for r in ranks if 10 <= r <= 13)
+    mid = sum(1 for r in ranks if 6 <= r <= 9)
+    low = sum(1 for r in ranks if 2 <= r <= 5)
+    if bw >= 2:
+        return 'bw'
+    if mid >= 2:
+        return 'mid'
+    if low >= 2:
+        return 'low'
+    hi = max(ranks)
+    return 'bw' if hi >= 10 else 'mid' if hi >= 6 else 'low'
+
+
+_FLOP_CLASS_RU = {
+    'rainbow': 'радуга', 'two_tone': 'дрова', 'mono': 'монотонная',
+    'OES': 'OES', 'OPESD': 'OPESD', 'gutshot': 'гатшот', 'unconn': 'несвязанная',
+    'none': 'без пар', 'two': 'парная', 'three': 'трипс на доске',
+    'bw_ace': 'бродвей с тузом', 'bw': 'бродвей', 'mid': 'средняя',
+    'low': 'низкая', 'low_ace': 'низкая с тузом',
+}
+
+
+def classify_flop(board):
+    ranks = [c[0] for c in board]
+    return (_flop_suit_class(board), _flop_conn_class(ranks),
+            _flop_pair_class(ranks), _flop_high_class(ranks))
+
+
+def flop_table_action(board, role, multipot):
+    """Возвращает (строка_действия, кортеж_текстуры) из таблицы флопа."""
+    suit, conn, pair, high = classify_flop(board)
+    key = '|'.join([suit, conn, pair, high, role])
+    table = _PF.FLOP_MU if multipot else _PF.FLOP_HU
+    act = table.get(key)
+    if act is None:
+        act = 'чек' if role == 'call' else 'ставка 33%'
+    return act, (suit, conn, pair, high)
+
+
+def _parse_postflop_action(action):
+    """('bet', pct, note) | ('check', None, note) | ('checkraise', None, note)."""
+    a = action.lower().strip()
+    if a.startswith('чек-рейз'):
+        return ('checkraise', None, action)
+    if a.startswith('чек'):
+        return ('check', None, action)
+    m = re.search(r'(\d+)\s*[-–]?\s*(\d+)?\s*%', action)
+    if 'ставка' in a and m:
+        lo = int(m.group(1)); hi = int(m.group(2)) if m.group(2) else lo
+        return ('bet', (lo + hi) // 2, action)
+    return ('check', None, action)
+
+
+def is_team_designated_bettor(game, pos):
+    """Когда таблица велит ставку и в раздаче 2+ наших: ставит только тот наш
+    игрок, после которого ходит ПРОТИВНИК (последний наш перед оппонентом),
+    остальные чекают."""
+    order = get_postflop_order(game)
+    if pos not in order:
+        return True
+    active = set(active_positions(game))
+    i = order.index(pos)
+    for p in order[i + 1:]:
+        if p not in active:
+            continue
+        t = game['seats'].get(p, {}).get('type')
+        if t == 'opponent':
+            return True          # дальше ходит противник — ставим мы
+        if t == 'our':
+            return False         # дальше наш напарник — ставит он, мы чек
+    return True
+
+
 def build_recommendation(game):
     """Рекомендация показывается ТОЛЬКО когда ходит наш игрок.
     Возвращает (текст, покерный_ярлык, физическая_позиция)."""
@@ -2105,6 +2224,39 @@ def build_recommendation(game):
                 board_b, p.get('cards', []), our_pos=poker_label,
                 flop_aggressor=flop_agg_label,
                 flop_bet_size=game.get('flop_bet_size', 0.5), n_opp=n_opp)
+        elif len(board_b) == 3:
+            # ФЛОП. Ставка для колла (facing bet) уже обработана моделью сговора
+            # выше (team_continue). Здесь мы ХОДИМ ПЕРВЫМИ — таблица флопа.
+            if rec_call > 0:
+                rec = postflop_recommend(
+                    p.get('equity_share', 0), game.get('pot', 0), rec_call,
+                    board_b, our_pos=poker_label,
+                    aggressor=pf_agg_label, n_opp=n_opp)
+            else:
+                # Роль КОМАНДЫ: агрессор, если префлоп-агрессор — наш игрок
+                team_has_agg = (game['seats'].get(pf_agg, {}).get('type') == 'our') if pf_agg else False
+                role = 'agg' if team_has_agg else 'call'
+                multipot = n_opp >= 2
+                action, tex = flop_table_action(board_b, role, multipot)
+                kind, pct, note = _parse_postflop_action(action)
+                tex_ru = ', '.join(_FLOP_CLASS_RU.get(x, x) for x in tex)
+                role_ru = 'агрессор' if team_has_agg else 'коллер'
+                n_our = sum(1 for s2 in game['seats'].values()
+                            if s2.get('type') == 'our' and not s2.get('folded', False)
+                            and not s2.get('pending', False))
+                if kind == 'bet':
+                    if n_our >= 2 and not is_team_designated_bettor(game, rec_pos):
+                        rec = (f"ЧЕК — ставит напарник, после которого ходит противник "
+                               f"(координация команды). Доска: {tex_ru}")
+                    else:
+                        amt = max(1, round(game.get('pot', 0) * pct / 100))
+                        rec = (f"БЕТ {amt} (~{pct}% банка) — {note}. "
+                               f"Роль: {role_ru}. Доска: {tex_ru}")
+                elif kind == 'checkraise':
+                    rec = (f"ЧЕК с планом ЧЕК-РЕЙЗ — {note}. "
+                           f"Роль: {role_ru}. Доска: {tex_ru}")
+                else:
+                    rec = f"ЧЕК — {note}. Роль: {role_ru}. Доска: {tex_ru}"
         else:
             rec = postflop_recommend(
                 p.get('equity_share', 0), game.get('pot', 0), rec_call,
