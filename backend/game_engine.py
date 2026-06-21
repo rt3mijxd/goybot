@@ -626,17 +626,17 @@ def _rake(pot, bb):
 
 def eval_collusion_continue(our_hands, opp_data, board, pot, calls, bb,
                             n_sim_full=4000, n_sim_sub=2500, dead_cards=None):
-    """Сговор: команда = один суперигрок. Решаем, какое подмножество наших рук
-    выгоднее всего оставить в игре, когда есть ставка для колла.
+    """Сговор (против ставки). По алгоритму PDF: рука продолжает, если её
+    РЕАЛЬНОЕ эквити (шанс побить всех оппонентов) >= НЕОБХОДИМОГО эквити
+    (пот-оддсы: сумма колла / (банк + сумма колла)).
 
-    Идея: руки уже вложившихся игроков (calls[i]==0) зафиксированы в банке.
-    Среди игроков, которым нужно доставлять (calls[i]>0), выбираем оптимальный
-    набор «сверху по эквити»: от никого до всех. Для каждого варианта считаем
-    командное EV с учётом банка, размеров ставок и рейка, и берём максимум.
+    Каждая рука оценивается по своим достоинствам — поэтому СИЛЬНЫЕ руки
+    (напр. две пары тузов у двоих) НЕ скидываются в пользу одного игрока:
+    каждая, проходящая по пот-оддсам, остаётся в игре. Карты напарников
+    учитываются как известные (блокеры) в индивидуальном эквити.
 
-    Возвращает: individual (эквити каждой руки vs оппоненты), team (полный набор),
-    flags (list[bool] — продолжать ли каждой рукой), best_m, evs (по числу
-    доставляющих игроков)."""
+    Возвращает individual (эквити vs оппоненты), team (полный набор),
+    flags (продолжать ли каждой рукой), best_m."""
     k = len(our_hands)
     full = simulate(our_hands, opp_data, board, n_sim=n_sim_full, dead_cards=dead_cards)
     individual = full['individual']
@@ -644,47 +644,23 @@ def eval_collusion_continue(our_hands, opp_data, board, pot, calls, bb,
 
     locked = [i for i in range(k) if calls[i] <= 0]        # уже в банке
     deciding = [i for i in range(k) if calls[i] > 0]        # нужно решение
-    # дециды по убыванию эквити
-    deciding.sort(key=lambda i: individual[i], reverse=True)
-
-    locked_hands = [our_hands[i] for i in locked]
-    base_dead = list(dead_cards or [])
-
-    def team_eq(continue_idx):
-        idxs = set(locked + continue_idx)
-        if not idxs:
-            return 0.0
-        if len(idxs) == k:
-            return team_full
-        subset = [our_hands[i] for i in idxs]
-        # Карты НАШИХ рук, которые НЕ продолжают, остаются известными/мёртвыми:
-        # они блокируют ауты и комбо оппонентов (и улучшения оставшихся рук).
-        excluded = [c for j in range(k) if j not in idxs for c in our_hands[j]]
-        return simulate(subset, opp_data, board, n_sim=n_sim_sub,
-                        dead_cards=base_dead + excluded)['team']
-
-    best_m, best_ev, evs = 0, None, {}
-    for m in range(0, len(deciding) + 1):
-        cont = deciding[:m]
-        cost = sum(calls[i] for i in cont)
-        p = team_eq(cont) / 100.0
-        pot_final = pot + cost
-        if not locked and m == 0:
-            ev = 0.0                                        # команда пасует — банк не наш
-        else:
-            ev = p * (pot_final - _rake(pot_final, bb)) - cost
-        evs[m] = ev
-        if best_ev is None or ev > best_ev + 1e-9:
-            best_ev, best_m = ev, m
+    deciding.sort(key=lambda i: individual[i], reverse=True)  # от сильнейшей
 
     flags = [False] * k
     for i in locked:
         flags[i] = True
-    for i in deciding[:best_m]:
-        flags[i] = True
+    # Жадно по убыванию силы: каждую руку оставляем, если её эквити покрывает
+    # необходимое (с учётом растущего банка от уже оставленных рук).
+    running_pot = float(pot)
+    for i in deciding:
+        ci = calls[i]
+        required = 100.0 * ci / (running_pot + ci) if (running_pot + ci) > 0 else 100.0
+        if individual[i] + 1e-9 >= required:
+            flags[i] = True
+            running_pot += ci
+    best_m = sum(1 for i in deciding if flags[i])
     return {'individual': individual, 'team': team_full,
-            'flags': flags, 'best_m': best_m, 'evs': evs,
-            'deciding': deciding, 'locked': locked}
+            'flags': flags, 'best_m': best_m, 'deciding': deciding, 'locked': locked}
 
 
 def hand_in_range(cards, pos, action):
