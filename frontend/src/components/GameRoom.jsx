@@ -332,12 +332,13 @@ function UnifiedActionPanel({ send }) {
                   Рейз
                 </button>
               </div>
-              {/* Кнопка «по совету» — точная сумма рейза из рекомендации */}
+              {/* Кнопка «по совету» — точная сумма рейза из рекомендации + % банка */}
               {isCurrentTurn && state.rec_action && state.rec_action.pos === pos
                 && state.rec_action.kind === 'raise' && state.rec_action.amount > 0 && (
                 <button onClick={() => act(pos, 'raise', { amount: state.rec_action.amount })}
                   className="bg-green-600 hover:bg-green-500 text-white text-xs font-bold px-2 py-1 rounded ring-1 ring-green-300 transition">
                   ✓ Рейз {state.rec_action.amount}
+                  {pot > 0 && <span className="font-normal opacity-80"> (≈{Math.round(state.rec_action.amount / pot * 100)}% банка)</span>}
                 </button>
               )}
               {/* Пресеты: номинал + % от банка */}
@@ -473,7 +474,8 @@ function PlayerActionPanel({ send, userId }) {
           && state.rec_action.kind === 'raise' && state.rec_action.amount > 0 && (
           <button onClick={() => act('raise', { amount: state.rec_action.amount })}
             className="bg-green-600 hover:bg-green-500 text-white text-sm font-bold px-3 py-2 rounded-lg ring-2 ring-green-300 transition">
-            ✓ Рейз {state.rec_action.amount} (совет)
+            ✓ Рейз {state.rec_action.amount}
+            {pot > 0 && <span className="font-normal opacity-80"> (≈{Math.round(state.rec_action.amount / pot * 100)}% банка)</span>}
           </button>
         )}
       </div>
