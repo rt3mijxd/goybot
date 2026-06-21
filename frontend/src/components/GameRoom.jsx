@@ -332,6 +332,14 @@ function UnifiedActionPanel({ send }) {
                   Рейз
                 </button>
               </div>
+              {/* Кнопка «по совету» — точная сумма рейза из рекомендации */}
+              {isCurrentTurn && state.rec_action && state.rec_action.pos === pos
+                && state.rec_action.kind === 'raise' && state.rec_action.amount > 0 && (
+                <button onClick={() => act(pos, 'raise', { amount: state.rec_action.amount })}
+                  className="bg-green-600 hover:bg-green-500 text-white text-xs font-bold px-2 py-1 rounded ring-1 ring-green-300 transition">
+                  ✓ Рейз {state.rec_action.amount}
+                </button>
+              )}
               {/* Пресеты: номинал + % от банка */}
               {isCurrentTurn && pot > 0 && (
                 <div className="flex gap-0.5 flex-wrap">
@@ -460,6 +468,14 @@ function PlayerActionPanel({ send, userId }) {
             Рейз
           </button>
         </div>
+        {/* Кнопка «по совету» — точная сумма рейза из рекомендации */}
+        {state.rec_action && state.rec_action.pos === myPos
+          && state.rec_action.kind === 'raise' && state.rec_action.amount > 0 && (
+          <button onClick={() => act('raise', { amount: state.rec_action.amount })}
+            className="bg-green-600 hover:bg-green-500 text-white text-sm font-bold px-3 py-2 rounded-lg ring-2 ring-green-300 transition">
+            ✓ Рейз {state.rec_action.amount} (совет)
+          </button>
+        )}
       </div>
       {pot > 0 && (
         <div className="flex gap-1 justify-center mt-2 flex-wrap">

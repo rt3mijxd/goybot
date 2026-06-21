@@ -82,6 +82,22 @@ def serialize_game(game: dict, user_id: str) -> dict:
     except Exception:
         pass
 
+    # Структурированное действие из рекомендации (для кнопки «по совету»)
+    rec_action = None
+    if rec_text and rec_phys:
+        head = rec_text.strip().upper()
+        first_num = re.search(r'(\d+)', rec_text)
+        amt = int(first_num.group(1)) if first_num else 0
+        if head.startswith('ФОЛД'):
+            rec_action = {'pos': rec_phys, 'kind': 'fold'}
+        elif head.startswith('ЧЕК'):
+            rec_action = {'pos': rec_phys, 'kind': 'check'}
+        elif head.startswith('КОЛЛ'):
+            rec_action = {'pos': rec_phys, 'kind': 'call', 'amount': amt}
+        elif head.startswith(('РЕЙЗ', 'БЕТ', 'ДОНК', '3БЕТ', '4БЕТ', 'ОЛЛ')):
+            if amt > 0:
+                rec_action = {'pos': rec_phys, 'kind': 'raise', 'amount': amt}
+
     # Рекомендация для конкретного игрока (если он наш)
     my_recommendation = None
     for pos in g.get('player_positions', []):
@@ -180,6 +196,7 @@ def serialize_game(game: dict, user_id: str) -> dict:
         'position_labels': position_labels,
         'per_player_recs': per_player_recs,
         'my_recommendation': my_recommendation,
+        'rec_action': rec_action,
         'call_amount': to_call(g, g.get('current_turn', '')) if g.get('current_turn') else 0,
         'test_mode': g.get('test_mode', False),
         'street_complete': g.get('current_turn') is None and g['state'] not in (
