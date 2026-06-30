@@ -27,6 +27,8 @@ from game_engine import (
     SUIT_DISPLAY, RANK_DISPLAY,
 )
 
+BETTING_STATES = (GameState.PREFLOP, GameState.FLOP, GameState.TURN, GameState.RIVER)
+
 SESSIONS: Dict[str, dict] = {}
 CONNECTIONS: Dict[str, Dict[str, WebSocket]] = {}
 PING_INTERVAL = 30
@@ -574,6 +576,32 @@ async def handle_skip_blinds(session_id: str, game: dict):
     await broadcast(session_id)
 
 
+def _known_cards_except(game: dict, except_pos=None) -> set:
+    """Все известные карты (руки игроков, кроме except_pos, + борд) как кортежи."""
+    used = set()
+    for p, s in game.get('seats', {}).items():
+        if p == except_pos:
+            continue
+        for c in s.get('player', {}).get('cards', []) or []:
+            if c and c != '??':
+                used.add(tuple(c))
+    for c in game.get('board', []):
+        used.add(tuple(c))
+    return used
+
+
+def _validate_hole_cards(game, parsed, except_pos):
+    """Возвращает текст ошибки или None. Карты в руке уникальны и не заняты
+    другими игроками/бордом (иначе эквити считается на невозможной колоде)."""
+    if len(set(tuple(c) for c in parsed)) != len(parsed):
+        return "две одинаковые карты в руке"
+    known = _known_cards_except(game, except_pos)
+    for c in parsed:
+        if tuple(c) in known:
+            return "карта уже занята другим игроком или на борде"
+    return None
+
+
 async def handle_set_my_cards(session_id: str, user_id: str, game: dict, msg: dict, ws: WebSocket):
     """Игрок сам вводит свои карты."""
     card_strs = msg.get('cards', [])
@@ -597,6 +625,10 @@ async def handle_set_my_cards(session_id: str, user_id: str, game: dict, msg: di
             parsed.append(c)
     if len(parsed) != 2:
         return await send_error(ws, "некорректные карты")
+
+    err = _validate_hole_cards(game, parsed, pos)
+    if err:
+        return await send_error(ws, err)
 
     seat = game['seats'][pos]
     seat['player']['cards'] = parsed
@@ -634,6 +666,10 @@ async def handle_set_test_cards(session_id: str, game: dict, msg: dict, ws: WebS
     if len(parsed) != 2:
         return await send_error(ws, "некорректные карты")
 
+    err = _validate_hole_cards(game, parsed, pos)
+    if err:
+        return await send_error(ws, err)
+
     seat['player']['cards'] = parsed
     name = seat['player'].get('name', pos)
     add_history(game, f"{name} ({pos}) карты введены")
@@ -650,6 +686,7 @@ async def handle_set_test_cards(session_id: str, game: dict, msg: dict, ws: WebS
 
 async def handle_deal_cards(session_id: str, game: dict, msg: dict):
     cards_map: dict = msg.get('cards', {})
+    seen = set()  # карты, уже разданные в этом батче
     for pos, card_strs in cards_map.items():
         seat = game['seats'].get(pos)
         if not seat or seat.get('type') != 'our':
@@ -659,8 +696,14 @@ async def handle_deal_cards(session_id: str, game: dict, msg: dict):
             c = parse_card(cs)
             if c:
                 parsed.append(c)
-        if parsed:
-            seat['player']['cards'] = parsed
+        if not parsed:
+            continue
+        # уникальность и отсутствие конфликтов с уже известными картами
+        if _validate_hole_cards(game, parsed, pos) or any(tuple(c) in seen for c in parsed):
+            continue   # пропускаем невозможную руку, чтобы не портить колоду
+        seat['player']['cards'] = parsed
+        for c in parsed:
+            seen.add(tuple(c))
 
     game['state'] = GameState.PREFLOP
     start_preflop(game)
@@ -688,6 +731,11 @@ async def handle_player_action(session_id: str, user_id: str, game: dict, msg: d
     if not seat or seat.get('type') != 'our':
         return await send_error(ws, "это не место нашего игрока")
 
+    # Защита очереди хода: действие должно прийти от того, чей сейчас ход
+    if game.get('state') in BETTING_STATES and game.get('current_turn') != pos:
+        return await send_error(ws, "сейчас не ход этого игрока")
+
+    pot_before = game.get('pot', 0)   # банк ДО ставки — для корректного % сайзинга
     if act == 'fold':
         seat['folded'] = True
         add_history(game, f"{seat['player'].get('name', pos)} фолд")
@@ -707,9 +755,9 @@ async def handle_player_action(session_id: str, user_id: str, game: dict, msg: d
                 game['preflop_aggressor'] = pos
             elif game['state'] == GameState.FLOP:
                 game['flop_aggressor'] = pos
-                game['flop_bet_size'] = amount / max(game.get('pot', 1), 1)
+                game['flop_bet_size'] = amount / max(pot_before, 1)
             elif game['state'] == GameState.TURN:
-                game['turn_bet_size'] = amount / max(game.get('pot', 1), 1)
+                game['turn_bet_size'] = amount / max(pot_before, 1)
                 game.setdefault('agg_history', '')
                 game['agg_history'] += 'b'
             game['acted_this_street'] = set()
@@ -724,9 +772,9 @@ async def handle_player_action(session_id: str, user_id: str, game: dict, msg: d
             game['street_bet_to'] = amount
             if game['state'] == GameState.FLOP:
                 game['flop_aggressor'] = pos
-                game['flop_bet_size'] = amount / max(game.get('pot', 1), 1)
+                game['flop_bet_size'] = amount / max(pot_before, 1)
             elif game['state'] == GameState.TURN:
-                game['turn_bet_size'] = amount / max(game.get('pot', 1), 1)
+                game['turn_bet_size'] = amount / max(pot_before, 1)
                 game['agg_history'] = game.get('agg_history', '') + 'b'
             add_history(game, f"{seat['player'].get('name', pos)} бет {amount}")
         else:
@@ -758,6 +806,11 @@ async def handle_opp_action(session_id: str, game: dict, msg: dict):
     if not seat or seat.get('type') != 'opponent':
         return
 
+    # Защита очереди хода
+    if game.get('state') in BETTING_STATES and game.get('current_turn') != pos:
+        return
+
+    pot_before = game.get('pot', 0)   # банк ДО ставки
     if act == 'fold':
         seat['folded'] = True
         game.setdefault('opp_actions', {})[pos] = 'fold'
@@ -781,9 +834,9 @@ async def handle_opp_action(session_id: str, game: dict, msg: dict):
             game['preflop_aggressor'] = pos
         elif game['state'] == GameState.FLOP:
             game['flop_aggressor'] = pos
-            game['flop_bet_size'] = amount / max(game.get('pot', 1), 1) if amount else 0.5
+            game['flop_bet_size'] = amount / max(pot_before, 1) if amount else 0.5
         elif game['state'] == GameState.TURN:
-            game['turn_bet_size'] = amount / max(game.get('pot', 1), 1) if amount else 0.5
+            game['turn_bet_size'] = amount / max(pot_before, 1) if amount else 0.5
             game['agg_history'] = game.get('agg_history', '') + 'b'
         game['acted_this_street'] = set()
         label = f"рейз {amount}" if amount else act
@@ -831,7 +884,7 @@ async def handle_board(session_id: str, game: dict, msg: dict):
 
     if game['state'] in (GameState.PREFLOP, GameState.DEALING):
         if len(parsed) >= 3:
-            game['board'] = parsed[:5]
+            game['board'] = parsed[:3]      # флоп — РОВНО 3 карты (не больше)
             game['state'] = GameState.FLOP
             start_street(game)
             add_history(game, f"Флоп: {' '.join(card_to_short(c) for c in game['board'][:3])}")
