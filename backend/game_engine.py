@@ -474,8 +474,19 @@ def narrow_range_by_board(combos, board, action):
 
 def get_range_combos(pos, action, known_set, preflop_action='',
                      board=None, is_postflop=False, opener_pos=''):
+    # База — диапазон ПОЗИЦИИ оппонента на префлопе (по PDF диапазон оппонента
+    # соответствует его позиции и сохраняется на всех улицах).
+    entry = HAND_RANGES.get(pos, HAND_RANGES['CO'])
+    _, open_specs = entry.get('open', ('', []))
+
     if is_postflop and board:
-        return get_postflop_range(action, known_set, board)
+        # Постфлоп: берём префлоп-диапазон позиции и сужаем по доске/действию,
+        # а НЕ generic «топ X% всех комбинаций».
+        combos = expand_combos(open_specs, known_set)
+        if not combos:
+            return get_postflop_range(action, known_set, board)  # фолбэк
+        return narrow_range_by_board(combos, board, action)
+
     akey_raw = action if action else preflop_action
     if akey_raw in ('raise', 'reraise', '3bet') and opener_pos:
         specs = get_3bet_specs(opener_pos, pos, '3bet')
@@ -485,9 +496,7 @@ def get_range_combos(pos, action, known_set, preflop_action='',
         specs = get_3bet_specs(opener_pos, pos, 'call')
         if specs:
             return expand_combos(specs, known_set)
-    entry = HAND_RANGES.get(pos, HAND_RANGES['CO'])
-    _, specs = entry.get('open', ('',[]))
-    return expand_combos(specs, known_set)
+    return expand_combos(open_specs, known_set)
 
 
 def get_postflop_range(action, known_set, board):
@@ -521,11 +530,28 @@ def get_postflop_range(action, known_set, board):
 #  SIMULATION
 # ════════════════════════════════════════════════
 
-def simulate(our_hands, opp_data, board, n_sim=4000, dead_cards=None):
+def _spot_seed(our_hands, opp_data, board, dead_cards, pot):
+    """Стабильный seed по содержимому спота (детерминизм Монте-Карло)."""
+    import hashlib
+    key = repr((
+        sorted(tuple(c) for h in our_hands for c in h),
+        sorted((e[0], e[1], e[2]) for e in opp_data),
+        sorted(tuple(c) for c in board),
+        sorted(tuple(c) for c in (dead_cards or [])),
+        int(pot),
+    ))
+    return int(hashlib.md5(key.encode()).hexdigest()[:8], 16)
+
+
+def simulate(our_hands, opp_data, board, n_sim=4000, dead_cards=None, seed=None):
     if not our_hands:
         return {'individual': [], 'team': 0.0}
     if not opp_data:
         return {'individual': [100.0]*len(our_hands), 'team': 100.0}
+
+    # Детерминизм по споту: при заданном seed один и тот же расклад всегда даёт
+    # одинаковое эквити (рекомендации не «дёргаются» между пересчётами).
+    rng_ = random.Random(seed) if seed is not None else random
 
     # dead_cards — карты сфолдивших игроков (известны, выбыли из колоды):
     # их нельзя раздавать оппонентам и они не выпадут на борде.
@@ -553,18 +579,21 @@ def simulate(our_hands, opp_data, board, n_sim=4000, dead_cards=None):
         for rng in opp_ranges:
             eligible = [c for c in rng if c[0] not in known_sim and c[1] not in known_sim]
             if not eligible:
+                # Фолбэк: равномерно две случайные карты из всей остаточной
+                # колоды (а не из первых 8-9 — чтобы не было систематич. сдвига).
                 deck_rem = [c for c in FULL_DECK if c not in known_sim]
                 if len(deck_rem) < 2:
                     skip = True; break
-                eligible = [[deck_rem[i], deck_rem[j]]
-                            for i in range(min(len(deck_rem), 8))
-                            for j in range(i+1, min(len(deck_rem), 9))]
-            chosen = random.choice(eligible)
+                chosen = rng_.sample(deck_rem, 2)
+                opp_sim.append(chosen)
+                known_sim.update(chosen)
+                continue
+            chosen = rng_.choice(eligible)
             opp_sim.append(chosen)
             known_sim.update(chosen)
         if skip: continue
         rem = [c for c in FULL_DECK if c not in known_sim]
-        random.shuffle(rem)
+        rng_.shuffle(rem)
         needed = 5 - len(board)
         if len(rem) < needed: continue
         full_board = list(board) + rem[:needed]
@@ -604,7 +633,11 @@ def calc_ev(wp, pot, call_amt, pos=''):
 def calc_ev_raise(wp, pot, raise_to, n_opp, equity_hu=None):
     if n_opp <= 0:
         return wp / 100 * pot
-    fold_prob = 0.72
+    # Вероятность фолда одного оппонента зависит от размера ставки относительно
+    # банка: чем крупнее рейз, тем чаще фолд (раньше было фиксированные 0.72).
+    size_ratio = raise_to / max(pot, 1)
+    fold_prob = 0.55 + 0.20 * min(size_ratio, 1.5)   # ~0.55 (мелкий) .. ~0.85 (крупный)
+    fold_prob = max(0.45, min(fold_prob, 0.88))
     p_all_fold = fold_prob ** n_opp
     p_call = 1.0 - p_all_fold
     ev_fold = pot
@@ -625,7 +658,7 @@ def _rake(pot, bb):
 
 
 def eval_collusion_continue(our_hands, opp_data, board, pot, calls, bb,
-                            n_sim_full=4000, n_sim_sub=2500, dead_cards=None):
+                            n_sim_full=4000, n_sim_sub=2500, dead_cards=None, seed=None):
     """Сговор (против ставки). По алгоритму PDF: рука продолжает, если её
     РЕАЛЬНОЕ эквити (шанс побить всех оппонентов) >= НЕОБХОДИМОГО эквити
     (пот-оддсы: сумма колла / (банк + сумма колла)).
@@ -638,7 +671,7 @@ def eval_collusion_continue(our_hands, opp_data, board, pot, calls, bb,
     Возвращает individual (эквити vs оппоненты), team (полный набор),
     flags (продолжать ли каждой рукой), best_m."""
     k = len(our_hands)
-    full = simulate(our_hands, opp_data, board, n_sim=n_sim_full, dead_cards=dead_cards)
+    full = simulate(our_hands, opp_data, board, n_sim=n_sim_full, dead_cards=dead_cards, seed=seed)
     individual = full['individual']
     team_full = full['team']
 
@@ -1898,8 +1931,12 @@ async def recalc(game):
         if s.get('type') == 'opponent' and not s.get('folded', False) and not s.get('pending', False):
             cur_act = opp_actions.get(pos, '')
             pf_act = opp_pf_actions.get(pos, '')
+            # Диапазон оппонента — по его ПОКЕРНОМУ ярлыку (а не физ. месту),
+            # агрессор тоже как ярлык (для корректного ключа 3-бет диапазонов).
+            opp_label = _get_poker_label(game, pos)
             opener = game.get('preflop_aggressor', '')
-            opp_data.append((pos, cur_act, pf_act, board, is_postflop, opener))
+            opener_label = _get_poker_label(game, opener) if opener else ''
+            opp_data.append((opp_label, cur_act, pf_act, board, is_postflop, opener_label))
     if not our_hands:
         game['team_win_pct'] = 0.0
         return
@@ -1922,18 +1959,22 @@ async def recalc(game):
         facing_bet = game.get('street_bet_to', 0) > 0
     use_collusion = facing_bet and len(our_hands) >= 2
 
+    # Детерминированный seed по споту: одинаковый расклад → одинаковое эквити
+    # (рекомендации на границе колл/фолд не «дёргаются» между пересчётами).
+    seed = _spot_seed(our_hands, opp_data, board, dead_cards, pot)
+
     sem = _get_sim_sem()
     async with sem:
         if use_collusion:
             result = await asyncio.get_event_loop().run_in_executor(
                 _SIM_EXECUTOR,
                 lambda: eval_collusion_continue(our_hands, opp_data, board, pot, calls, bb,
-                                                dead_cards=dead_cards)
+                                                dead_cards=dead_cards, seed=seed)
             )
         else:
             result = await asyncio.get_event_loop().run_in_executor(
                 _SIM_EXECUTOR,
-                lambda: simulate(our_hands, opp_data, board, n_sim=4000, dead_cards=dead_cards)
+                lambda: simulate(our_hands, opp_data, board, n_sim=4000, dead_cards=dead_cards, seed=seed)
             )
     game['team_win_pct'] = result['team']
     n_opp_active = sum(1 for s in game['seats'].values()
