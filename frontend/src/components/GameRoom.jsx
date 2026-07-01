@@ -266,8 +266,8 @@ function UnifiedActionPanel({ send }) {
                 : 'opacity-40'
             }`}
           >
-            {/* Имя + карты под ним */}
-            <div className="w-20 shrink-0 flex flex-col gap-0.5">
+            {/* Имя + карты/тип под ним */}
+            <div className="w-24 shrink-0 flex flex-col gap-0.5">
               <span className={`text-xs font-bold leading-tight ${
                 isCurrentTurn
                   ? 'text-yellow-400'
@@ -280,6 +280,21 @@ function UnifiedActionPanel({ send }) {
                   {cards.length === 2 && !cards.includes('??')
                     ? cards.map((c, i) => <Card key={i} card={c} size="xs" />)
                     : <span className="text-[10px] text-gray-500">нет карт</span>}
+                </div>
+              )}
+              {!isOur && (
+                <div className="flex gap-0.5" title="Тип оппонента: тайт/пассив/норм/агро/лузовый">
+                  {[['tight', 'Т'], ['passive', 'П'], ['normal', 'Н'], ['aggressive', 'А'], ['loose', 'Л']].map(([t, lbl]) => (
+                    <button key={t}
+                      onClick={() => send({ action: 'set_opp_type', position: pos, otype: t })}
+                      title={t}
+                      className={`text-[9px] w-4 h-4 rounded transition ${
+                        (seat.otype || 'normal') === t
+                          ? 'bg-red-600 text-white font-bold'
+                          : 'bg-gray-700 text-gray-400 hover:bg-gray-600'}`}>
+                      {lbl}
+                    </button>
+                  ))}
                 </div>
               )}
             </div>

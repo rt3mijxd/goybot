@@ -1932,11 +1932,13 @@ async def recalc(game):
             cur_act = opp_actions.get(pos, '')
             pf_act = opp_pf_actions.get(pos, '')
             # Диапазон оппонента — по его ПОКЕРНОМУ ярлыку (а не физ. месту),
-            # агрессор тоже как ярлык (для корректного ключа 3-бет диапазонов).
+            # сдвинутому под ТИП оппонента (тайт/лузовый/агро/пассив).
             opp_label = _get_poker_label(game, pos)
+            otype = s.get('otype', 'normal')
+            range_label = type_adjusted_label(opp_label, otype)
             opener = game.get('preflop_aggressor', '')
             opener_label = _get_poker_label(game, opener) if opener else ''
-            opp_data.append((opp_label, cur_act, pf_act, board, is_postflop, opener_label))
+            opp_data.append((range_label, cur_act, pf_act, board, is_postflop, opener_label))
     if not our_hands:
         game['team_win_pct'] = 0.0
         return
@@ -2011,6 +2013,22 @@ async def recalc(game):
 def _get_poker_label(game, phys_pos):
     """Получить покерный ярлык (UTG/CO/BU/SB/BB) для физической позиции."""
     return position_labels_map(game).get(phys_pos, phys_pos)
+
+
+# Тип оппонента сдвигает ШИРИНУ его диапазона по шкале «тайт→лузово».
+# Порядок позиций от самого тайтового открытия к самому широкому.
+_TIGHTNESS_ORDER = ['UTG', 'MP', 'CO', 'BU', 'SB', 'BB']
+_OPP_TYPE_SHIFT = {'tight': -2, 'passive': -1, 'normal': 0, 'aggressive': 1, 'loose': 2}
+
+
+def type_adjusted_label(label, otype):
+    """Ярлык, чей открытый диапазон использовать для оппонента данного типа.
+    tight → уже (сдвиг к UTG), loose → шире (сдвиг к BB)."""
+    if label not in _TIGHTNESS_ORDER:
+        return label
+    idx = _TIGHTNESS_ORDER.index(label)
+    idx = max(0, min(len(_TIGHTNESS_ORDER) - 1, idx + _OPP_TYPE_SHIFT.get(otype, 0)))
+    return _TIGHTNESS_ORDER[idx]
 
 
 def _active_opponents(game):

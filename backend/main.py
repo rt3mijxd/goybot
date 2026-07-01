@@ -74,6 +74,7 @@ def serialize_game(game: dict, user_id: str) -> dict:
         elif raw.get('type') == 'opponent':
             p = raw.get('player', {})
             s['player'] = {'number': p.get('number')}
+            s['otype'] = raw.get('otype', 'normal')
         seats_out[pos] = s
 
     board_cards = [card_to_short(c) for c in g.get('board', [])]
@@ -416,6 +417,10 @@ async def handle_message(session_id: str, user_id: str, msg: dict, ws: WebSocket
         if not is_responsible:
             return await send_error(ws, "только оператор управляет местами")
         await handle_grow_table(session_id, game)
+    elif action == 'set_opp_type':
+        if not is_responsible:
+            return await send_error(ws, "только оператор задаёт тип оппонента")
+        await handle_set_opp_type(session_id, game, msg)
     elif action == 'next_round':
         if not is_responsible:
             return await send_error(ws, "только оператор начинает раунд")
@@ -1003,6 +1008,24 @@ async def handle_toggle_seat_out(session_id: str, game: dict, msg: dict):
         else:
             add_history(game, f"В{num} ({pos}) сел за стол")
 
+    await recalc(game)
+    await broadcast(session_id)
+
+
+_OPP_TYPES = ('tight', 'passive', 'normal', 'aggressive', 'loose')
+
+
+async def handle_set_opp_type(session_id: str, game: dict, msg: dict):
+    """Оператор помечает тип оппонента — это меняет ширину его диапазона."""
+    pos = msg.get('position', '').upper()
+    otype = msg.get('otype', 'normal')
+    if otype not in _OPP_TYPES:
+        return
+    seat = game['seats'].get(pos)
+    if not seat or seat.get('type') != 'opponent':
+        return
+    seat['otype'] = otype
+    add_history(game, f"В{seat.get('player', {}).get('number', '?')} ({pos}): тип {otype}")
     await recalc(game)
     await broadcast(session_id)
 
