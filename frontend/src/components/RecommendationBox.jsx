@@ -23,6 +23,15 @@ export default function RecommendationBox() {
           {pos && <span className="text-xs text-purple-400">({pos})</span>}
         </div>
         <div className="text-white text-sm font-semibold whitespace-pre-line">{rec}</div>
+        {state.rec_confidence && (
+          <div className={`mt-1.5 text-xs rounded px-2 py-1 ${
+            state.rec_confidence.level === 'low'
+              ? 'bg-red-900/50 text-red-300'
+              : 'bg-yellow-900/50 text-yellow-300'
+          }`}>
+            ⚠ {state.rec_confidence.note}
+          </div>
+        )}
       </motion.div>
     </AnimatePresence>
   )

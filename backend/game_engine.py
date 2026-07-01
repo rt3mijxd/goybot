@@ -616,10 +616,12 @@ def simulate(our_hands, opp_data, board, n_sim=4000, dead_cards=None, seed=None)
         elif team_best == opp_best:
             team_wins += 0.5
     if valid == 0:
-        return {'individual': [33.0]*len(our_hands), 'team': 33.0}
+        # Не набралось валидных прогонов — оценка НЕнадёжна (флажок наружу).
+        return {'individual': [33.0]*len(our_hands), 'team': 33.0, 'reliable': False}
     return {
         'individual': [(w/valid)*100 for w in ind_wins],
         'team':       (team_wins/valid)*100,
+        'reliable':   valid >= max(500, n_sim // 4),
     }
 
 
@@ -705,7 +707,8 @@ def eval_collusion_continue(our_hands, opp_data, board, pot, calls, bb,
             running_pot += ci
     best_m = sum(1 for i in deciding if flags[i])
     return {'individual': individual, 'team': team_full,
-            'flags': flags, 'best_m': best_m, 'deciding': deciding, 'locked': locked}
+            'flags': flags, 'best_m': best_m, 'deciding': deciding, 'locked': locked,
+            'reliable': full.get('reliable', True)}
 
 
 def hand_in_range(cards, pos, action):
@@ -2033,6 +2036,7 @@ async def recalc(game):
                 lambda: simulate(our_hands, opp_data, board, n_sim=4000, dead_cards=dead_cards, seed=seed)
             )
     game['team_win_pct'] = result['team']
+    game['equity_reliable'] = result.get('reliable', True)
     n_opp_active = sum(1 for s in game['seats'].values()
                        if s.get('type') == 'opponent' and not s.get('folded', False)
                        and not s.get('pending', False))

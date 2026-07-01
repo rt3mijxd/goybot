@@ -113,6 +113,21 @@ def serialize_game(game: dict, user_id: str) -> dict:
                 if allin:
                     rec_text = rec_text + f"  →  ОЛЛ-ИН {rem} (по стеку/низкий SPR)"
 
+    # «Гейт доверия»: помечаем ненадёжные/пограничные советы, чтобы оператор
+    # не переоценивал маргинальные решения.
+    rec_confidence = None
+    if rec_phys:
+        if not g.get('equity_reliable', True):
+            rec_confidence = {'level': 'low', 'note': 'мало данных для оценки — доверять осторожно'}
+        else:
+            call_amt = to_call(g, rec_phys)
+            if call_amt > 0:
+                eq = g['seats'].get(rec_phys, {}).get('player', {}).get('equity_share', 0)
+                required = call_amt / (g.get('pot', 0) + call_amt) * 100
+                if abs(eq - required) <= 3.0:
+                    rec_confidence = {'level': 'border',
+                                      'note': f'на грани колл/фолд (эквити {eq:.0f}% ≈ пот-одды {required:.0f}%)'}
+
     # Рекомендация для конкретного игрока (если он наш)
     my_recommendation = None
     for pos in g.get('player_positions', []):
@@ -212,6 +227,7 @@ def serialize_game(game: dict, user_id: str) -> dict:
         'per_player_recs': per_player_recs,
         'my_recommendation': my_recommendation,
         'rec_action': rec_action,
+        'rec_confidence': rec_confidence,
         'spr': round(spr(g, g.get('current_turn')), 1) if g.get('current_turn') else None,
         'effective_stack': effective_remaining(g, g.get('current_turn')) if g.get('current_turn') else None,
         'call_amount': to_call(g, g.get('current_turn', '')) if g.get('current_turn') else 0,
