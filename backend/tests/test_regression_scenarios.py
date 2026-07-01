@@ -152,6 +152,25 @@ async def run():
     print(f"  {'PASS' if okd else 'FAIL'}  dead cards: T8 eq {eq_dead:.1f} < {eq_no:.1f} "
           f"(две мёртвые T8 убивают ауты)")
 
+    # ── СТЕКИ / SPR: без стеков не блокирует; короткий стек -> кап/олл-ин ──
+    import main
+    g = mkgame({'UTG': h('AsAh')}, ['MP', 'CO', 'BU', 'SB', 'BB'], ['UTG'], contrib={'SB': 25, 'BB': 50})
+    g['responsible_id'] = 'u0'; g['current_turn'] = 'UTG'
+    await ge.recalc(g)
+    p = main.serialize_game(g, 'u0')
+    ra = p['rec_action'] or {}
+    expect_ok = ra.get('kind') == 'raise' and not ra.get('allin')
+    globals()['_passed'] += expect_ok; globals()['_failed'] += (not expect_ok)
+    print(f"  {'PASS' if expect_ok else 'FAIL'}  без стеков: обычный рейз (не олл-ин), SPR={p['spr']}")
+
+    g['stacks'] = {'UTG': 120}
+    await ge.recalc(g)
+    p = main.serialize_game(g, 'u0')
+    ra = p['rec_action'] or {}
+    oks = ra.get('allin') and ra.get('amount') == 120
+    globals()['_passed'] += oks; globals()['_failed'] += (not oks)
+    print(f"  {'PASS' if oks else 'FAIL'}  короткий стек 120: олл-ин {ra.get('amount')} (SPR={p['spr']})")
+
 
 def main():
     asyncio.run(run())

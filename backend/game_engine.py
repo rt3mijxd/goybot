@@ -1538,6 +1538,8 @@ def make_game():
         'seat_claimed':       {},
         'street_contrib':     {},
         'street_bet_to':      0,
+        'stacks':             {},   # pos -> размер стека (не задан = глубокий по умолчанию)
+        'committed':          {},   # pos -> вложено за раздачу
     }
 
 
@@ -1783,9 +1785,47 @@ def pot_add(game, pos, amount_to):
     delta = max(0, amount_to - already)
     game['pot'] += delta
     sc[pos] = amount_to
+    # накапливаем вложенное за всю раздачу (для остатка стека/SPR)
+    comm = game.setdefault('committed', {})
+    comm[pos] = comm.get(pos, 0) + delta
     if amount_to > game.get('street_bet_to', 0):
         game['street_bet_to'] = amount_to
         game['last_bet']       = amount_to
+
+
+# ── Стеки / эффективный стек / SPR ──
+def default_stack(game):
+    """Глубокий стек по умолчанию — если оператор не ввёл стеки, игра не блокируется."""
+    bb = game.get('bb', 0)
+    return 100 * bb if bb > 0 else 100000
+
+
+def remaining_stack(game, pos):
+    """Сколько фишек осталось у игрока (стек минус вложенное в раздаче)."""
+    st = game.get('stacks', {}).get(pos)
+    if st is None:
+        st = default_stack(game)
+    return max(0, st - game.get('committed', {}).get(pos, 0))
+
+
+def effective_remaining(game, pos):
+    """Эффективный остаток: min(наш остаток, макс. остаток активного оппонента) —
+    реально разыгрываемые фишки против поля."""
+    ours = remaining_stack(game, pos)
+    opp_rem = [remaining_stack(game, p) for p in game.get('positions', [])
+               if game['seats'].get(p, {}).get('type') == 'opponent'
+               and not game['seats'].get(p, {}).get('folded', False)
+               and not game['seats'].get(p, {}).get('pending', False)]
+    if not opp_rem:
+        return ours
+    return min(ours, max(opp_rem))
+
+
+def spr(game, pos):
+    pot = game.get('pot', 0)
+    if pot <= 0:
+        return 99.0
+    return effective_remaining(game, pos) / pot
 
 
 def only_one_left(game):
@@ -1853,6 +1893,7 @@ def reset_for_new_round(game):
     game['history'] = []
     game['state'] = GameState.PREFLOP
     game['street_contrib'] = {}
+    game['committed'] = {}          # вложенное сбрасывается на новую раздачу
     game['street_bet_to'] = game['bb']
     game['recommendation'] = None
     game['recommendation_pos'] = None

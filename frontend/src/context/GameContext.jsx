@@ -31,6 +31,8 @@ const initialState = {
   per_player_recs: {},
   my_recommendation: null,
   rec_action: null,
+  spr: null,
+  effective_stack: null,
   call_amount: 0,
   test_mode: false,
   street_complete: false,

@@ -22,7 +22,7 @@ from game_engine import (
     parse_card, card_to_short, cards_str, card_str,
     get_preflop_order, get_postflop_order,
     position_labels_map, ring_positions, blind_positions, advance_button,
-    place_initial_button,
+    place_initial_button, remaining_stack, effective_remaining, spr,
     TABLE_POSITIONS, ALL_POSITIONS, STAGE_NAMES,
     SUIT_DISPLAY, RANK_DISPLAY,
 )
@@ -52,6 +52,9 @@ def serialize_game(game: dict, user_id: str) -> dict:
         raw = g['seats'].get(pos, {'type': 'empty'})
         s = {'type': raw.get('type', 'empty'), 'folded': raw.get('folded', False),
              'pending': raw.get('pending', False)}
+        if raw.get('type') in ('our', 'opponent'):
+            s['stack'] = g.get('stacks', {}).get(pos)        # None = глубокий по умолчанию
+            s['remaining'] = remaining_stack(g, pos)
         if raw.get('type') == 'our':
             p = raw.get('player', {})
             # Оператор видит все карты; наши игроки видят карты друг друга
@@ -99,7 +102,16 @@ def serialize_game(game: dict, user_id: str) -> dict:
             rec_action = {'pos': rec_phys, 'kind': 'call', 'amount': amt}
         elif head.startswith(('РЕЙЗ', 'БЕТ', 'ДОНК', '3БЕТ', '4БЕТ', 'ОЛЛ')):
             if amt > 0:
-                rec_action = {'pos': rec_phys, 'kind': 'raise', 'amount': amt}
+                # Кап по стеку + коммит на низком SPR: размер не больше остатка,
+                # а при низком SPR рейз = олл-ин (иначе просто ограничиваем стеком).
+                rem = remaining_stack(g, rec_phys)
+                allin = False
+                if amt >= rem or spr(g, rec_phys) <= 2.0:
+                    amt = rem
+                    allin = True
+                rec_action = {'pos': rec_phys, 'kind': 'raise', 'amount': amt, 'allin': allin}
+                if allin:
+                    rec_text = rec_text + f"  →  ОЛЛ-ИН {rem} (по стеку/низкий SPR)"
 
     # Рекомендация для конкретного игрока (если он наш)
     my_recommendation = None
@@ -200,6 +212,8 @@ def serialize_game(game: dict, user_id: str) -> dict:
         'per_player_recs': per_player_recs,
         'my_recommendation': my_recommendation,
         'rec_action': rec_action,
+        'spr': round(spr(g, g.get('current_turn')), 1) if g.get('current_turn') else None,
+        'effective_stack': effective_remaining(g, g.get('current_turn')) if g.get('current_turn') else None,
         'call_amount': to_call(g, g.get('current_turn', '')) if g.get('current_turn') else 0,
         'test_mode': g.get('test_mode', False),
         'street_complete': g.get('current_turn') is None and g['state'] not in (
@@ -421,6 +435,10 @@ async def handle_message(session_id: str, user_id: str, msg: dict, ws: WebSocket
         if not is_responsible:
             return await send_error(ws, "только оператор задаёт тип оппонента")
         await handle_set_opp_type(session_id, game, msg)
+    elif action == 'set_stack':
+        if not is_responsible:
+            return await send_error(ws, "только оператор задаёт стеки")
+        await handle_set_stack(session_id, game, msg)
     elif action == 'next_round':
         if not is_responsible:
             return await send_error(ws, "только оператор начинает раунд")
@@ -1013,6 +1031,25 @@ async def handle_toggle_seat_out(session_id: str, game: dict, msg: dict):
 
 
 _OPP_TYPES = ('tight', 'passive', 'normal', 'aggressive', 'loose')
+
+
+async def handle_set_stack(session_id: str, game: dict, msg: dict):
+    """Оператор задаёт стек игрока (пусто/0 → сброс к глубокому по умолчанию)."""
+    pos = msg.get('position', '').upper()
+    seat = game['seats'].get(pos)
+    if not seat or seat.get('type') not in ('our', 'opponent'):
+        return
+    raw = msg.get('stack', None)
+    stacks = game.setdefault('stacks', {})
+    if raw in (None, '', 0, '0'):
+        stacks.pop(pos, None)          # сброс к дефолту
+    else:
+        try:
+            stacks[pos] = max(0, int(raw))
+        except (TypeError, ValueError):
+            return
+    await recalc(game)
+    await broadcast(session_id)
 
 
 async def handle_set_opp_type(session_id: str, game: dict, msg: dict):

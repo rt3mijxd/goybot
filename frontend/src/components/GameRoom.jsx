@@ -205,6 +205,12 @@ function UnifiedActionPanel({ send }) {
             Все действия завершены
           </span>
         )}
+        {currentTurn && state.spr != null && (
+          <span className={`text-xs px-2 py-0.5 rounded ${state.spr <= 2 ? 'bg-red-600/30 text-red-300' : 'bg-gray-700 text-gray-400'}`}
+                title="Stack-to-Pot Ratio (эфф. стек / банк). ≤2 — коммит/олл-ин зона">
+            SPR {state.spr}{state.spr <= 2 ? ' · коммит' : ''}
+          </span>
+        )}
       </div>
       {shownPlayers.map((pos) => {
         const seat = state.seats[pos]
@@ -347,13 +353,13 @@ function UnifiedActionPanel({ send }) {
                   Рейз
                 </button>
               </div>
-              {/* Кнопка «по совету» — точная сумма рейза из рекомендации + % банка */}
+              {/* Кнопка «по совету» — точная сумма из рекомендации (+ олл-ин/% банка) */}
               {isCurrentTurn && state.rec_action && state.rec_action.pos === pos
                 && state.rec_action.kind === 'raise' && state.rec_action.amount > 0 && (
                 <button onClick={() => act(pos, 'raise', { amount: state.rec_action.amount })}
                   className="bg-green-600 hover:bg-green-500 text-white text-xs font-bold px-2 py-1 rounded ring-1 ring-green-300 transition">
-                  ✓ Рейз {state.rec_action.amount}
-                  {pot > 0 && <span className="font-normal opacity-80"> (≈{Math.round(state.rec_action.amount / pot * 100)}% банка)</span>}
+                  {state.rec_action.allin ? '✓ ОЛЛ-ИН' : '✓ Рейз'} {state.rec_action.amount}
+                  {!state.rec_action.allin && pot > 0 && <span className="font-normal opacity-80"> (≈{Math.round(state.rec_action.amount / pot * 100)}% банка)</span>}
                 </button>
               )}
               {/* Пресеты: номинал + % от банка */}
@@ -374,16 +380,28 @@ function UnifiedActionPanel({ send }) {
                 </div>
               )}
             </div>
-            {/* Убрать врага со стула */}
-            {!isOur && (
-              <button
-                onClick={() => send({ action: 'toggle_seat_out', position: pos })}
-                title="Враг вышел из-за стола — убрать со стула"
-                className="ml-auto shrink-0 bg-red-900/60 hover:bg-red-700 text-red-300 hover:text-white text-xs font-semibold px-2.5 py-1.5 rounded-lg border border-red-700/60 transition"
-              >
-                ✕ Убрать
-              </button>
-            )}
+            {/* Стек (необязательно — пусто = глубокий по умолчанию) + убрать врага */}
+            <div className="ml-auto flex items-center gap-1 shrink-0">
+              <input
+                type="number"
+                key={`st-${pos}-${seat.stack}`}
+                defaultValue={seat.stack ?? ''}
+                placeholder="стек"
+                onBlur={(e) => send({ action: 'set_stack', position: pos, stack: e.target.value })}
+                onKeyDown={(e) => { if (e.key === 'Enter') e.target.blur() }}
+                title={`Стек игрока (остаток: ${seat.remaining ?? '∞'}). Пусто = глубокий по умолчанию.`}
+                className="w-14 bg-gray-900/40 rounded px-1 py-1 text-gray-300 text-[10px] focus:outline-none focus:ring-1 focus:ring-gray-500"
+              />
+              {!isOur && (
+                <button
+                  onClick={() => send({ action: 'toggle_seat_out', position: pos })}
+                  title="Враг вышел из-за стола — убрать со стула"
+                  className="shrink-0 bg-red-900/60 hover:bg-red-700 text-red-300 hover:text-white text-xs font-semibold px-2.5 py-1.5 rounded-lg border border-red-700/60 transition"
+                >
+                  ✕
+                </button>
+              )}
+            </div>
           </div>
         )
       })}
