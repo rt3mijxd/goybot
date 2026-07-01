@@ -648,6 +648,18 @@ def calc_ev_raise(wp, pot, raise_to, n_opp, equity_hu=None):
     return p_all_fold * ev_fold + p_call * ev_call
 
 
+def open_raise_to(bb, n_opp):
+    """Стандартный размер открытия: 2.5x в упор/малолюдно, крупнее в мультипоте
+    (с бóльшим числом оппонентов сзади рейз должен быть больше)."""
+    mult = 2.5 if n_opp <= 2 else (3.0 if n_opp <= 4 else 3.5)
+    return int(round(bb * mult))
+
+
+def reraise_to(call_amt, bb, factor=3.0):
+    """Размер 3-бета/4-бета: множитель к сумме, которую надо доставить."""
+    return int(round(max(call_amt * factor, bb * 3)))
+
+
 RAKE_RATE = 0.05          # 5% рейк с банка
 RAKE_CAP_BB = 3.0         # потолок рейка = 3 больших блайнда
 
@@ -1464,15 +1476,16 @@ def recommend_action(wp, ev, pot, call_amt, pos='', cards=None, is_preflop=False
     if is_preflop and cards and pos:
         decision = classify_hand_preflop(cards, pos, bb or 1, call_amt, opener_pos=opener_pos, bet_level=bet_level, open_specs=open_specs)
         if decision == 'raise':
-            raise_to = max(call_amt * 3, bb * 3) if call_amt > 0 else bb * 3
+            bbv = bb or 1
+            raise_to = reraise_to(call_amt, bbv, 3.0) if call_amt > 0 else open_raise_to(bbv, n_opp)
             ev_raise = calc_ev_raise(wp, pot, raise_to, n_opp)
             ev_txt = f"EV+{ev_raise:.0f}" if ev_raise >= 0 else f"EV{ev_raise:.0f}"
             return f"РЕЙЗ до ~{raise_to} — рука в диапазоне открытия {pos} ({ev_txt}, {wp:.0f}% equity vs {opp_txt()})"
         if decision == '3bet':
-            raise_to = max(call_amt * 3, bb * 3)
+            raise_to = reraise_to(call_amt, bb, 3.0)
             return f"3БЕТ до ~{raise_to} — сильная рука против рейза ({wp:.0f}% vs {opp_txt()})"
         if decision == '4bet':
-            raise_to = max(call_amt * 2, bb * 4)
+            raise_to = reraise_to(call_amt, bb, 2.2)
             if bet_level >= 3:
                 return f"КОЛЛ/ОЛЛ-ИН — топ-диапазон, рентабельно идти ва-банк ({wp:.0f}% vs {opp_txt()})"
             return f"4БЕТ до ~{raise_to} — топ-диапазон против 3бета ({wp:.0f}% vs {opp_txt()})"
@@ -2503,7 +2516,8 @@ def build_recommendation(game):
                         and s2.get('player', {}).get('team_continue'))
         if team_continue:
             if wp >= 62:
-                raise_to = max(rec_call * 3, game.get('bb', 0) * 3)
+                bbv = game.get('bb', 0) or 1
+                raise_to = reraise_to(rec_call, bbv, 3.0) if rec_call > 0 else open_raise_to(bbv, n_opp)
                 rec = (f"РЕЙЗ до ~{raise_to} — сильнейшая рука команды, "
                        f"строим банк против оппонентов ({wp:.0f}% equity)")
             else:
