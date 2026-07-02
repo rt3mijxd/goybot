@@ -635,10 +635,8 @@ def calc_ev(wp, pot, call_amt, pos=''):
 def calc_ev_raise(wp, pot, raise_to, n_opp, equity_hu=None):
     if n_opp <= 0:
         return wp / 100 * pot
-    # Вероятность фолда одного оппонента зависит от размера ставки относительно
-    # банка: чем крупнее рейз, тем чаще фолд (раньше было фиксированные 0.72).
     size_ratio = raise_to / max(pot, 1)
-    fold_prob = 0.55 + 0.20 * min(size_ratio, 1.5)   # ~0.55 (мелкий) .. ~0.85 (крупный)
+    fold_prob = 0.55 + 0.20 * min(size_ratio, 1.5)
     fold_prob = max(0.45, min(fold_prob, 0.88))
     p_all_fold = fold_prob ** n_opp
     p_call = 1.0 - p_all_fold
@@ -2037,6 +2035,7 @@ async def recalc(game):
             )
     game['team_win_pct'] = result['team']
     game['equity_reliable'] = result.get('reliable', True)
+    game['last_seed'] = seed   # для воспроизводимости спота (артефакты)
     n_opp_active = sum(1 for s in game['seats'].values()
                        if s.get('type') == 'opponent' and not s.get('folded', False)
                        and not s.get('pending', False))

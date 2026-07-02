@@ -113,6 +113,7 @@ export default function GameRoom({ sessionId, userId, userName, role, testMode }
                   >
                     Новая игра
                   </button>
+                  <CopySpotButton state={state} sessionId={sessionId} />
                 </div>
               </>
             )}
@@ -531,6 +532,54 @@ function PlayerActionPanel({ send, userId }) {
     </div>
   )
 }
+
+/* Копировать спот целиком (для разбора спорных советов) */
+function CopySpotButton({ state, sessionId }) {
+  const [copied, setCopied] = useState(false)
+  const copy = () => {
+    const players = Object.entries(state.seats || {})
+      .filter(([, s]) => s && s.type !== 'empty')
+      .map(([pos, s]) => ({
+        pos,
+        label: state.position_labels?.[pos] || pos,
+        type: s.type,
+        otype: s.otype,
+        cards: s.player?.cards,
+        equity: s.player?.equity_share,
+        folded: s.folded,
+        pending: s.pending,
+      }))
+    const artifact = {
+      ts: new Date().toISOString(),
+      session: sessionId,
+      seed: state.spot_seed,
+      state: state.state,
+      board: state.board,
+      pot: state.pot,
+      sb: state.sb, bb: state.bb,
+      spr: state.spr,
+      team_equity: state.team_win_pct,
+      current_turn: state.current_turn,
+      recommendation: state.recommendation,
+      rec_action: state.rec_action,
+      confidence: state.rec_confidence,
+      players,
+    }
+    const text = JSON.stringify(artifact, null, 2)
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(true); setTimeout(() => setCopied(false), 1500)
+    })
+  }
+  return (
+    <button onClick={copy}
+      title="Скопировать текущий спот (карты, борд, банк, стеки, типы, совет, эквити, seed) для разбора"
+      className={`px-4 py-2.5 rounded-lg transition text-sm ${
+        copied ? 'bg-green-700 text-green-200' : 'bg-gray-700 hover:bg-gray-600 text-gray-300'}`}>
+      {copied ? '✓ Скопировано' : '📋 Копировать спот'}
+    </button>
+  )
+}
+
 
 /* Тест-режим: оператор вводит карты за каждого нашего игрока */
 function TestCardInputs({ send }) {

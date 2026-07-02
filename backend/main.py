@@ -228,6 +228,7 @@ def serialize_game(game: dict, user_id: str) -> dict:
         'my_recommendation': my_recommendation,
         'rec_action': rec_action,
         'rec_confidence': rec_confidence,
+        'spot_seed': g.get('last_seed'),
         'spr': round(spr(g, g.get('current_turn')), 1) if g.get('current_turn') else None,
         'effective_stack': effective_remaining(g, g.get('current_turn')) if g.get('current_turn') else None,
         'call_amount': to_call(g, g.get('current_turn', '')) if g.get('current_turn') else 0,
